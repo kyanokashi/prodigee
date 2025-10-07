@@ -225,11 +225,20 @@ class AbletonMCP(ControlSurface):
             elif command_type == "get_track_info":
                 track_index = params.get("track_index", 0)
                 response["result"] = self._get_track_info(track_index)
+            elif command_type == "get_device_parameters":
+                track_index = params.get("track_index", 0)
+                device_index = params.get("device_index", 0)
+                response["result"] = self._get_device_parameters(track_index, device_index)
+            elif command_type == "get_notes_from_clip":
+                track_index = params.get("track_index", 0)
+                clip_index = params.get("clip_index", 0)
+                response["result"] = self._get_notes_from_clip(track_index, clip_index)
             # Commands that modify Live's state should be scheduled on the main thread
-            elif command_type in ["create_midi_track", "set_track_name", 
-                                 "create_clip", "add_notes_to_clip", "set_clip_name", 
+            elif command_type in ["create_midi_track", "set_track_name",
+                                 "create_clip", "add_notes_to_clip", "add_new_notes_to_clip", "set_clip_name",
                                  "set_tempo", "fire_clip", "stop_clip",
-                                 "start_playback", "stop_playback", "load_browser_item"]:
+                                 "start_playback", "stop_playback", "load_browser_item",
+                                 "set_device_parameter"]:
                 # Use a thread-safe approach with a response queue
                 response_queue = queue.Queue()
                 
@@ -254,6 +263,11 @@ class AbletonMCP(ControlSurface):
                             clip_index = params.get("clip_index", 0)
                             notes = params.get("notes", [])
                             result = self._add_notes_to_clip(track_index, clip_index, notes)
+                        elif command_type == "add_new_notes_to_clip":
+                            track_index = params.get("track_index", 0)
+                            clip_index = params.get("clip_index", 0)
+                            notes = params.get("notes", [])
+                            result = self._add_new_notes_to_clip(track_index, clip_index, notes)
                         elif command_type == "set_clip_name":
                             track_index = params.get("track_index", 0)
                             clip_index = params.get("clip_index", 0)
@@ -282,6 +296,15 @@ class AbletonMCP(ControlSurface):
                             track_index = params.get("track_index", 0)
                             item_uri = params.get("item_uri", "")
                             result = self._load_browser_item(track_index, item_uri)
+                        elif command_type == "set_device_parameter":
+                            track_index = params.get("track_index", 0)
+                            device_index = params.get("device_index", 0)
+                            parameter_name = params.get("parameter_name", None)
+                            parameter_index = params.get("parameter_index", None)
+                            value = params.get("value", None)
+                            result = self._set_device_parameter(track_index, device_index, parameter_name, parameter_index, value)
+    
+
                         
                         # Put the result in the queue
                         response_queue.put({"status": "success", "result": result})
@@ -481,24 +504,86 @@ class AbletonMCP(ControlSurface):
             self.log_message("Error creating clip: " + str(e))
             raise
     
-    def _add_notes_to_clip(self, track_index, clip_index, notes):
-        """Add MIDI notes to a clip"""
+    def _get_notes_from_clip(self, track_index, clip_index):
+        """Get MIDI notes from a clip using get_notes_extended"""
         try:
             if track_index < 0 or track_index >= len(self._song.tracks):
                 raise IndexError("Track index out of range")
-            
+
             track = self._song.tracks[track_index]
-            
+
             if clip_index < 0 or clip_index >= len(track.clip_slots):
                 raise IndexError("Clip index out of range")
-            
+
             clip_slot = track.clip_slots[clip_index]
-            
+
             if not clip_slot.has_clip:
                 raise Exception("No clip in slot")
-            
+
             clip = clip_slot.clip
-            
+
+            # Check if clip is a MIDI clip
+            if not clip.is_midi_clip:
+                raise Exception("Clip is not a MIDI clip")
+
+            # Get notes using get_notes_extended (Live 11+)
+            # Returns a tuple of note specifications
+            notes_data = clip.get_notes_extended(from_time=0, from_pitch=0, time_span=clip.length, pitch_span=128)
+
+            # Convert notes to a list of dictionaries
+            notes_list = []
+            for note in notes_data:
+                # Each note is a tuple-like object with properties
+                # We need to extract the properties and convert to dict
+                note_dict = {
+                    "note_id": note.note_id,
+                    "pitch": note.pitch,
+                    "start_time": note.start_time,
+                    "duration": note.duration,
+                    "velocity": note.velocity,
+                    "mute": note.mute
+                }
+
+                # Add extended properties if available (Live 11+)
+                if hasattr(note, 'velocity_deviation'):
+                    note_dict["velocity_deviation"] = note.velocity_deviation
+                if hasattr(note, 'release_velocity'):
+                    note_dict["release_velocity"] = note.release_velocity
+                if hasattr(note, 'probability'):
+                    note_dict["probability"] = note.probability
+
+                notes_list.append(note_dict)
+
+            result = {
+                "clip_name": clip.name,
+                "clip_length": clip.length,
+                "note_count": len(notes_list),
+                "notes": notes_list
+            }
+            return result
+        except Exception as e:
+            self.log_message("Error getting notes from clip: " + str(e))
+            self.log_message(traceback.format_exc())
+            raise
+
+    def _add_notes_to_clip(self, track_index, clip_index, notes):
+        """Add MIDI notes to a clip (replaces existing notes - legacy method)"""
+        try:
+            if track_index < 0 or track_index >= len(self._song.tracks):
+                raise IndexError("Track index out of range")
+
+            track = self._song.tracks[track_index]
+
+            if clip_index < 0 or clip_index >= len(track.clip_slots):
+                raise IndexError("Clip index out of range")
+
+            clip_slot = track.clip_slots[clip_index]
+
+            if not clip_slot.has_clip:
+                raise Exception("No clip in slot")
+
+            clip = clip_slot.clip
+
             # Convert note data to Live's format
             live_notes = []
             for note in notes:
@@ -507,18 +592,74 @@ class AbletonMCP(ControlSurface):
                 duration = note.get("duration", 0.25)
                 velocity = note.get("velocity", 100)
                 mute = note.get("mute", False)
-                
+
                 live_notes.append((pitch, start_time, duration, velocity, mute))
-            
-            # Add the notes
+
+            # Add the notes (replaces all existing notes)
             clip.set_notes(tuple(live_notes))
-            
+
             result = {
                 "note_count": len(notes)
             }
             return result
         except Exception as e:
             self.log_message("Error adding notes to clip: " + str(e))
+            raise
+
+    def _add_new_notes_to_clip(self, track_index, clip_index, notes):
+        """Add new MIDI notes to a clip without replacing existing notes (Live 11+)"""
+        try:
+            if track_index < 0 or track_index >= len(self._song.tracks):
+                raise IndexError("Track index out of range")
+
+            track = self._song.tracks[track_index]
+
+            if clip_index < 0 or clip_index >= len(track.clip_slots):
+                raise IndexError("Clip index out of range")
+
+            clip_slot = track.clip_slots[clip_index]
+
+            if not clip_slot.has_clip:
+                raise Exception("No clip in slot")
+
+            clip = clip_slot.clip
+
+            # Check if clip is a MIDI clip
+            if not clip.is_midi_clip:
+                raise Exception("Clip is not a MIDI clip")
+
+            # Convert note data to Live 11+ format (dictionaries)
+            live_notes = []
+            for note in notes:
+                note_dict = {
+                    "pitch": note.get("pitch", 60),
+                    "start_time": note.get("start_time", 0.0),
+                    "duration": note.get("duration", 0.25),
+                    "velocity": note.get("velocity", 100),
+                    "mute": note.get("mute", False)
+                }
+
+                # Add extended properties if provided (Live 11+)
+                if "velocity_deviation" in note:
+                    note_dict["velocity_deviation"] = note.get("velocity_deviation", 0.0)
+                if "release_velocity" in note:
+                    note_dict["release_velocity"] = note.get("release_velocity", 64)
+                if "probability" in note:
+                    note_dict["probability"] = note.get("probability", 1.0)
+
+                live_notes.append(note_dict)
+
+            # Add new notes without replacing existing ones
+            clip.add_new_notes(tuple(live_notes))
+
+            result = {
+                "note_count": len(notes),
+                "added_notes": True
+            }
+            return result
+        except Exception as e:
+            self.log_message("Error adding new notes to clip: " + str(e))
+            self.log_message(traceback.format_exc())
             raise
     
     def _set_clip_name(self, track_index, clip_index, name):
@@ -1060,3 +1201,145 @@ class AbletonMCP(ControlSurface):
             self.log_message("Error getting browser items at path: {0}".format(str(e)))
             self.log_message(traceback.format_exc())
             raise
+
+    def _get_device_parameters(self, track_index, device_index):
+        """Get all parameters for a device"""
+        try:
+            if track_index < 0 or track_index >= len(self._song.tracks):
+                raise IndexError("Track index out of range")
+
+            track = self._song.tracks[track_index]
+
+            if device_index < 0 or device_index >= len(track.devices):
+                raise IndexError("Device index out of range")
+            
+            device = track.devices[device_index]
+            
+            # Get all parameters for the device
+            parameters = []
+            for param_index, param in enumerate(device.parameters):
+                # Skip parameters that are not automatable or are just for display
+                if not param.is_enabled or param.is_quantized and len(param.value_items) <= 1:
+                    continue
+                
+                param_info = {
+                    "index": param_index,
+                    "name": param.name,
+                    "value": param.value,
+                    "min": param.min,
+                    "max": param.max,
+                }
+                
+                # Add value items for quantized parameters (e.g., filter types)
+                if param.is_quantized and len(param.value_items) > 1:
+                    param_info["value_items"] = [str(item) for item in param.value_items]
+                    param_info["value_item_index"] = int(param.value)
+                    param_info["value_item"] = str(param.value_items[int(param.value)])
+                
+                parameters.append(param_info)
+            
+            return {
+                "device_name": device.name,
+                "device_class": device.class_name,
+                "device_type": self._get_device_type(device),
+                "parameters": parameters
+            }
+        except Exception as e:
+            self.log_message("Error getting device parameters: " + str(e))
+            self.log_message(traceback.format_exc())
+            raise
+    
+    def _set_device_parameter(self, track_index, device_index, parameter_name=None, parameter_index=None, value=None):
+        """Set a device parameter by name or index"""
+        try:
+            if track_index < 0 or track_index >= len(self._song.tracks):
+                raise IndexError("Track index out of range")
+
+            track = self._song.tracks[track_index]
+
+            if device_index < 0 or device_index >= len(track.devices):
+                raise IndexError("Device index out of range")
+            
+            device = track.devices[device_index]
+            
+            # Find the parameter by name or index
+            parameter = None
+            if parameter_name is not None:
+                # Find parameter by name
+                for param in device.parameters:
+                    if param.name == parameter_name:
+                        parameter = param
+                        break
+                
+                if parameter is None:
+                    raise ValueError(f"Parameter '{parameter_name}' not found in device '{device.name}'")
+            
+            elif parameter_index is not None:
+                # Find parameter by index
+                if parameter_index < 0 or parameter_index >= len(device.parameters):
+                    raise IndexError("Parameter index out of range")
+                
+                parameter = device.parameters[parameter_index]
+            
+            else:
+                raise ValueError("Either parameter_name or parameter_index must be provided")
+            
+            # Check if the parameter is enabled
+            if not parameter.is_enabled:
+                raise ValueError(f"Parameter '{parameter.name}' is not enabled")
+            
+            # Set the parameter value
+            if value is None:
+                raise ValueError("Value must be provided")
+
+            # Convert value to appropriate type if it's a string
+            if isinstance(value, (str, unicode if 'unicode' in dir(__builtins__) else str)):
+                try:
+                    # Try to convert to float first
+                    value = float(value)
+                except (ValueError, TypeError):
+                    # If that fails, keep as string (for quantized parameters)
+                    pass
+
+            # Handle quantized parameters (e.g., filter types)
+            if parameter.is_quantized and len(parameter.value_items) > 1:
+                # If value is a string, find the matching value item
+                if isinstance(value, str):
+                    value_index = None
+                    for i, item in enumerate(parameter.value_items):
+                        if str(item).lower() == value.lower():
+                            value_index = i
+                            break
+                    
+                    if value_index is None:
+                        raise ValueError(f"Value '{value}' not found in parameter value items")
+                    
+                    value = value_index
+                
+                # Ensure value is an integer for quantized parameters
+                value = int(value)
+                
+                # Check if value is in range
+                if value < 0 or value >= len(parameter.value_items):
+                    raise ValueError(f"Value index {value} out of range for parameter '{parameter.name}'")
+            else:
+                # For continuous parameters, ensure value is within range
+                if value < parameter.min or value > parameter.max:
+                    raise ValueError(f"Value {value} out of range for parameter '{parameter.name}' (min: {parameter.min}, max: {parameter.max})")
+            
+            # Set the parameter value
+            parameter.value = value
+            
+            return {
+                "device_name": device.name,
+                "parameter_name": parameter.name,
+                "parameter_index": list(device.parameters).index(parameter),
+                "value": parameter.value,
+                "min": parameter.min,
+                "max": parameter.max
+            }
+        except Exception as e:
+            self.log_message("Error setting device parameter: " + str(e))
+            self.log_message(traceback.format_exc())
+            raise
+    

@@ -5,7 +5,7 @@ import json
 import logging
 from dataclasses import dataclass
 from contextlib import asynccontextmanager
-from typing import AsyncIterator, Dict, Any, List, Union
+from typing import AsyncIterator, Dict, Any, List, Union, Optional
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, 
@@ -103,7 +103,7 @@ class AbletonConnection:
         # Check if this is a state-modifying command
         is_modifying_command = command_type in [
             "create_midi_track", "create_audio_track", "set_track_name",
-            "create_clip", "add_notes_to_clip", "set_clip_name",
+            "create_clip", "add_notes_to_clip", "add_new_notes_to_clip", "set_clip_name",
             "set_tempo", "fire_clip", "stop_clip", "set_device_parameter",
             "start_playback", "stop_playback", "load_instrument_or_effect"
         ]
@@ -183,11 +183,28 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
             _ableton_connection = None
         logger.info("AbletonMCP server shut down")
 
-# Create the MCP server with lifespan support
+# Create the MCP server with lifespan support and default instructions
 mcp = FastMCP(
     "AbletonMCP",
-    description="Ableton Live integration through the Model Context Protocol",
-    lifespan=server_lifespan
+    lifespan=server_lifespan,
+    instructions="""You are an expert Ableton Live music producer and audio engineer assistant. You have deep knowledge of:
+
+- Music theory, composition, and arrangement
+- MIDI programming and sequencing
+- Sound design and synthesis
+- Audio effects and mixing techniques
+- Ableton Live's workflow and best practices
+
+When working with Ableton:
+1. Always get session info first to understand the current project state
+2. Use descriptive track and clip names for organization
+3. Consider musical context (key, tempo, genre) when making creative suggestions
+4. Explain your creative decisions in musical terms
+5. Think about the overall arrangement and how parts work together
+6. When programming MIDI, use musically appropriate velocities, timing, and note patterns
+7. Consider the genre and style when suggesting instruments, effects, and production techniques
+
+Be creative, practical, and focused on helping users create great-sounding music in Ableton Live."""
 )
 
 # Global connection for resources
@@ -254,6 +271,42 @@ def get_ableton_connection():
             raise Exception("Could not connect to Ableton. Make sure the Remote Script is running.")
     
     return _ableton_connection
+
+
+# Prompts for specialized LLM behavior
+
+@mcp.prompt()
+def ableton_music_producer(ctx: Context) -> str:
+    """System prompt for music production with Ableton Live"""
+    return """You are an expert Ableton Live music producer and audio engineer. You have deep knowledge of:
+
+- Music theory, composition, and arrangement
+- MIDI programming and sequencing
+- Sound design and synthesis
+- Audio effects and mixing techniques
+- Ableton Live's workflow and best practices
+
+When working with Ableton:
+1. Always get session info first to understand the current project state
+2. Use descriptive track and clip names for organization
+3. Consider musical context (key, tempo, genre) when making suggestions
+4. Explain your creative decisions in musical terms
+5. Think about the overall arrangement and how parts work together
+
+Be creative, practical, and focused on helping create great-sounding music."""
+
+@mcp.prompt()
+def ableton_midi_programmer(ctx: Context) -> str:
+    """System prompt specialized for MIDI programming"""
+    return """You are a MIDI programming specialist for Ableton Live. Focus on:
+
+- Creating musically interesting note patterns
+- Using appropriate note velocities and timing
+- Understanding scales, chords, and progressions
+- Programming drums with realistic velocity and timing variations
+- Creating melodies and basslines that work well together
+
+Always consider the musical context and genre when programming MIDI."""
 
 
 # Core Tool endpoints
@@ -342,15 +395,37 @@ def create_clip(ctx: Context, track_index: int, clip_index: int, length: float =
         return f"Error creating clip: {str(e)}"
 
 @mcp.tool()
+def get_notes_from_clip(ctx: Context, track_index: int, clip_index: int) -> str:
+    """
+    Get MIDI notes from a clip using get_notes_extended.
+    Returns note data including note IDs and all MIDI properties (MPE, probability, velocity deviation, etc.)
+
+    Parameters:
+    - track_index: The index of the track containing the clip
+    - clip_index: The index of the clip slot containing the clip
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("get_notes_from_clip", {
+            "track_index": track_index,
+            "clip_index": clip_index
+        })
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        logger.error(f"Error getting notes from clip: {str(e)}")
+        return f"Error getting notes from clip: {str(e)}"
+
+@mcp.tool()
 def add_notes_to_clip(
-    ctx: Context, 
-    track_index: int, 
-    clip_index: int, 
+    ctx: Context,
+    track_index: int,
+    clip_index: int,
     notes: List[Dict[str, Union[int, float, bool]]]
 ) -> str:
     """
-    Add MIDI notes to a clip.
-    
+    Add MIDI notes to a clip (REPLACES all existing notes - legacy method).
+    Use add_new_notes_to_clip instead to add notes without replacing.
+
     Parameters:
     - track_index: The index of the track containing the clip
     - clip_index: The index of the clip slot containing the clip
@@ -363,10 +438,40 @@ def add_notes_to_clip(
             "clip_index": clip_index,
             "notes": notes
         })
-        return f"Added {len(notes)} notes to clip at track {track_index}, slot {clip_index}"
+        return f"Added {len(notes)} notes to clip at track {track_index}, slot {clip_index} (replaced existing notes)"
     except Exception as e:
         logger.error(f"Error adding notes to clip: {str(e)}")
         return f"Error adding notes to clip: {str(e)}"
+
+@mcp.tool()
+def add_new_notes_to_clip(
+    ctx: Context,
+    track_index: int,
+    clip_index: int,
+    notes: List[Dict[str, Union[int, float, bool]]]
+) -> str:
+    """
+    Add new MIDI notes to a clip WITHOUT replacing existing notes (Live 11+).
+    Supports extended properties: velocity_deviation, release_velocity, probability.
+
+    Parameters:
+    - track_index: The index of the track containing the clip
+    - clip_index: The index of the clip slot containing the clip
+    - notes: List of note dictionaries with properties:
+      * Required: pitch, start_time, duration, velocity
+      * Optional: mute, velocity_deviation, release_velocity, probability
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("add_new_notes_to_clip", {
+            "track_index": track_index,
+            "clip_index": clip_index,
+            "notes": notes
+        })
+        return f"Added {len(notes)} new notes to clip at track {track_index}, slot {clip_index} (kept existing notes)"
+    except Exception as e:
+        logger.error(f"Error adding new notes to clip: {str(e)}")
+        return f"Error adding new notes to clip: {str(e)}"
 
 @mcp.tool()
 def set_clip_name(ctx: Context, track_index: int, clip_index: int, name: str) -> str:
@@ -651,6 +756,72 @@ def load_drum_kit(ctx: Context, track_index: int, rack_uri: str, kit_path: str) 
     except Exception as e:
         logger.error(f"Error loading drum kit: {str(e)}")
         return f"Error loading drum kit: {str(e)}"
+
+@mcp.tool()
+def get_device_parameters(ctx: Context, track_index: int, device_index: int) -> str:
+    """
+    Get all parameters for a device.
+
+    Parameters:
+    - track_index: The index of the track containing the device
+    - device_index: The index of the device on the track
+
+    Returns:
+    - JSON string with device information and parameters
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("get_device_parameters", {
+            "track_index": track_index,
+            "device_index": device_index
+        })
+
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        logger.error(f"Error getting device parameters: {str(e)}")
+        return f"Error getting device parameters: {str(e)}"
+
+@mcp.tool()
+def set_device_parameter(ctx: Context, track_index: int, device_index: int, 
+                         parameter_name: Optional[str] = None, 
+                         parameter_index: Optional[int] = None, 
+                         value: Optional[Union[float, int, str]] = None) -> str:
+    """
+    Set a device parameter by name or index.
+    
+    Parameters:
+    - track_index: The index of the track containing the device
+    - device_index: The index of the device on the track
+    - parameter_name: The name of the parameter to set (alternative to parameter_index)
+    - parameter_index: The index of the parameter to set (alternative to parameter_name)
+    - value: The value to set the parameter to
+    
+    Returns:
+    - String with the result of the operation
+    """
+    try:
+        if parameter_name is None and parameter_index is None:
+            return "Error: Either parameter_name or parameter_index must be provided"
+        
+        if value is None:
+            return "Error: Value must be provided"
+        
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_device_parameter", {
+            "track_index": track_index,
+            "device_index": device_index,
+            "parameter_name": parameter_name,
+            "parameter_index": parameter_index,
+            "value": value
+        })
+        
+        if "parameter_name" in result:
+            return f"Set parameter '{result['parameter_name']}' of device '{result['device_name']}' to {result['value']}"
+        else:
+            return f"Failed to set parameter: {result.get('message', 'Unknown error')}"
+    except Exception as e:
+        logger.error(f"Error setting device parameter: {str(e)}")
+        return f"Error setting device parameter: {str(e)}"
 
 # Main execution
 def main():
