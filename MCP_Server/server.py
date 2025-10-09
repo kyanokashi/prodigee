@@ -104,6 +104,13 @@ class AbletonConnection:
         is_modifying_command = command_type in [
             "create_midi_track", "create_audio_track", "set_track_name",
             "create_clip", "add_notes_to_clip", "add_new_notes_to_clip", "set_clip_name",
+            "remove_notes_from_clip", "modify_notes_in_clip", "select_notes_from_clip",
+            "set_track_volume", "set_track_pan", "set_track_mute", "set_track_solo", "set_track_arm",
+            "delete_track", "duplicate_track", "delete_clip", "duplicate_clip",
+            "set_clip_loop", "set_clip_color", "add_automation_point", "clear_automation",
+            "create_scene", "delete_scene", "fire_scene",
+            "set_loop_start", "set_loop_end", "set_playback_position", "set_metronome",
+            "quantize_notes", "transpose_notes",
             "set_tempo", "fire_clip", "stop_clip", "set_device_parameter",
             "start_playback", "stop_playback", "load_instrument_or_effect"
         ]
@@ -691,7 +698,7 @@ def get_browser_items_at_path(ctx: Context, path: str) -> str:
         
         return json.dumps(result, indent=2)
     except Exception as e:
-        error_msg = str(e)
+        error_msg = str(eN)
         if "Browser is not available" in error_msg:
             logger.error(f"Browser is not available in Ableton: {error_msg}")
             return f"Error: The Ableton browser is not available. Make sure Ableton Live is fully loaded and try again."
@@ -760,14 +767,27 @@ def load_drum_kit(ctx: Context, track_index: int, rack_uri: str, kit_path: str) 
 @mcp.tool()
 def get_device_parameters(ctx: Context, track_index: int, device_index: int) -> str:
     """
-    Get all parameters for a device.
+    Get all parameters for a device (including 3rd party plugins).
+
+    This tool works for both Ableton native devices and 3rd party VST/AU/AAX plugins.
+    For 3rd party plugins, ALL parameters are returned without filtering.
 
     Parameters:
     - track_index: The index of the track containing the device
     - device_index: The index of the device on the track
 
     Returns:
-    - JSON string with device information and parameters
+    - JSON string with device information including:
+      * device_name: Name of the device
+      * device_class: Ableton's internal class name
+      * device_type: Detected type (instrument, audio_effect, etc.)
+      * is_plugin: True if this is a 3rd party plugin (VST/AU/AAX)
+      * parameter_count: Number of accessible parameters
+      * parameters: Array of parameter objects with index, name, value, min, max
+
+    Note: For 3rd party plugins with many parameters (e.g., 100+), consider using
+    the rack workflow: load plugin into a rack, map desired parameters to macros (0-7),
+    then control via macros using set_device_parameter on the rack.
     """
     try:
         ableton = get_ableton_connection()
@@ -822,6 +842,672 @@ def set_device_parameter(ctx: Context, track_index: int, device_index: int,
     except Exception as e:
         logger.error(f"Error setting device parameter: {str(e)}")
         return f"Error setting device parameter: {str(e)}"
+
+# ============================================================================
+# MACRO CONTROL TOOLS
+# ============================================================================
+
+@mcp.tool()
+def get_rack_chain_devices(ctx: Context, track_index: int, device_index: int, chain_index: int = 0) -> str:
+    """
+    Get all devices inside a rack's chain.
+
+    Parameters:
+    - track_index: The index of the track containing the rack
+    - device_index: The index of the rack device
+    - chain_index: The index of the chain (default 0 for single-chain racks)
+
+    Returns:
+    - JSON string with list of devices inside the rack's chain
+
+    Use this to discover what devices (like plugins) are inside a rack.
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("get_rack_chain_devices", {
+            "track_index": track_index,
+            "device_index": device_index,
+            "chain_index": chain_index
+        })
+
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        logger.error(f"Error getting rack chain devices: {str(e)}")
+        return f"Error getting rack chain devices: {str(e)}"
+
+@mcp.tool()
+def get_rack_chain_device_parameters(
+    ctx: Context,
+    track_index: int,
+    device_index: int,
+    chain_index: int,
+    chain_device_index: int
+) -> str:
+    """
+    Get parameters from a device inside a rack's chain.
+
+    Parameters:
+    - track_index: The index of the track containing the rack
+    - device_index: The index of the rack device
+    - chain_index: The index of the chain (usually 0)
+    - chain_device_index: The index of the device inside the chain
+
+    Returns:
+    - JSON string with all parameters for the device inside the rack
+
+    Use this to get parameters from 3rd party plugins inside racks.
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("get_rack_chain_device_parameters", {
+            "track_index": track_index,
+            "device_index": device_index,
+            "chain_index": chain_index,
+            "chain_device_index": chain_device_index
+        })
+
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        logger.error(f"Error getting rack chain device parameters: {str(e)}")
+        return f"Error getting rack chain device parameters: {str(e)}"
+
+@mcp.tool()
+def map_parameter_to_macro(
+    ctx: Context,
+    track_index: int,
+    device_index: int,
+    chain_index: int,
+    chain_device_index: int,
+    parameter_index: int,
+    macro_index: int
+) -> str:
+    """
+    Map a device parameter to a macro control in a Device Rack.
+    This is the recommended way to control 3rd party plugin parameters.
+
+    Parameters:
+    - track_index: The index of the track containing the rack
+    - device_index: The index of the rack device on the track
+    - chain_index: The index of the chain (usually 0 for single-chain racks)
+    - chain_device_index: The index of the device inside the chain
+    - parameter_index: The index of the parameter on the device inside the chain
+    - macro_index: The index of the macro control (0-7 for standard racks)
+
+    Workflow:
+    1. Use get_rack_chain_devices to find the device inside the rack
+    2. Use get_rack_chain_device_parameters to see available parameters
+    3. Use this tool to map parameters to macro controls (0-7)
+    4. Control the plugin via macros using set_device_parameter on the rack's macro parameters
+
+    Note: The device at device_index must be a Rack (Instrument/Audio/MIDI/Drum Rack).
+
+    Returns:
+    - JSON string with mapping information
+    """
+    try:
+        if macro_index < 0 or macro_index > 7:
+            return "Error: macro_index must be between 0 and 7"
+
+        ableton = get_ableton_connection()
+        result = ableton.send_command("map_parameter_to_macro", {
+            "track_index": track_index,
+            "device_index": device_index,
+            "chain_index": chain_index,
+            "chain_device_index": chain_device_index,
+            "parameter_index": parameter_index,
+            "macro_index": macro_index
+        })
+
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        logger.error(f"Error mapping parameter to macro: {str(e)}")
+        return f"Error mapping parameter to macro: {str(e)}"
+
+@mcp.tool()
+def get_rack_macro_mappings(ctx: Context, track_index: int, device_index: int) -> str:
+    """
+    Get all macro mappings for a Device Rack.
+
+    Parameters:
+    - track_index: The index of the track containing the rack
+    - device_index: The index of the rack device
+
+    Returns:
+    - JSON string with information about each macro (0-7) and their current values
+
+    Use this to see what macros are available in a rack device.
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("get_rack_macro_mappings", {
+            "track_index": track_index,
+            "device_index": device_index
+        })
+
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        logger.error(f"Error getting rack macro mappings: {str(e)}")
+        return f"Error getting rack macro mappings: {str(e)}"
+
+# ============================================================================
+# NOTE MANIPULATION TOOLS
+# ============================================================================
+
+@mcp.tool()
+def remove_notes_from_clip(
+    ctx: Context,
+    track_index: int,
+    clip_index: int,
+    note_ids: Optional[List[int]] = None,
+    from_time: Optional[float] = None,
+    to_time: Optional[float] = None,
+    from_pitch: Optional[int] = None,
+    to_pitch: Optional[int] = None
+) -> str:
+    """
+    Remove notes from a clip by note IDs or time/pitch range.
+
+    Parameters:
+    - track_index: Track index
+    - clip_index: Clip slot index
+    - note_ids: Optional list of note IDs to remove (if provided, range params ignored)
+    - from_time: Start time in beats (for range removal)
+    - to_time: End time in beats (for range removal)
+    - from_pitch: Start pitch 0-127 (for range removal)
+    - to_pitch: End pitch 0-127 (for range removal)
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("remove_notes_from_clip", {
+            "track_index": track_index,
+            "clip_index": clip_index,
+            "note_ids": note_ids,
+            "from_time": from_time,
+            "to_time": to_time,
+            "from_pitch": from_pitch,
+            "to_pitch": to_pitch
+        })
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        logger.error(f"Error removing notes: {str(e)}")
+        return f"Error removing notes: {str(e)}"
+
+@mcp.tool()
+def modify_notes_in_clip(
+    ctx: Context,
+    track_index: int,
+    clip_index: int,
+    modifications: List[Dict[str, Union[int, float, bool]]]
+) -> str:
+    """
+    Modify existing notes in a clip by note_id (Live 11+).
+    Each modification must include note_id and the properties to change.
+
+    Parameters:
+    - track_index: Track index
+    - clip_index: Clip slot index
+    - modifications: List of dicts with note_id and properties to modify
+      (e.g., [{"note_id": 123, "pitch": 60, "velocity": 100}])
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("modify_notes_in_clip", {
+            "track_index": track_index,
+            "clip_index": clip_index,
+            "modifications": modifications
+        })
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        logger.error(f"Error modifying notes: {str(e)}")
+        return f"Error modifying notes: {str(e)}"
+
+@mcp.tool()
+def select_notes_from_clip(
+    ctx: Context,
+    track_index: int,
+    clip_index: int,
+    from_time: float = 0.0,
+    to_time: Optional[float] = None,
+    from_pitch: int = 0,
+    to_pitch: int = 127
+) -> str:
+    """
+    Select/filter notes from a clip by time and pitch range.
+
+    Parameters:
+    - track_index: Track index
+    - clip_index: Clip slot index
+    - from_time: Start time in beats
+    - to_time: End time in beats (None = clip length)
+    - from_pitch: Start pitch 0-127
+    - to_pitch: End pitch 0-127
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("select_notes_from_clip", {
+            "track_index": track_index,
+            "clip_index": clip_index,
+            "from_time": from_time,
+            "to_time": to_time,
+            "from_pitch": from_pitch,
+            "to_pitch": to_pitch
+        })
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        logger.error(f"Error selecting notes: {str(e)}")
+        return f"Error selecting notes: {str(e)}"
+
+# ============================================================================
+# TRACK & MIXER CONTROL TOOLS
+# ============================================================================
+
+@mcp.tool()
+def set_track_volume(ctx: Context, track_index: int, volume: float) -> str:
+    """Set track volume (0.0 to 1.0, where 0.85 ≈ 0dB)"""
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_track_volume", {"track_index": track_index, "volume": volume})
+        return f"Set track {track_index} volume to {volume}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def set_track_pan(ctx: Context, track_index: int, pan: float) -> str:
+    """Set track pan (-1.0 = left, 0.0 = center, 1.0 = right)"""
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_track_pan", {"track_index": track_index, "pan": pan})
+        return f"Set track {track_index} pan to {pan}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def set_track_mute(ctx: Context, track_index: int, mute: bool) -> str:
+    """Set track mute state"""
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_track_mute", {"track_index": track_index, "mute": mute})
+        return f"Set track {track_index} mute to {mute}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def set_track_solo(ctx: Context, track_index: int, solo: bool) -> str:
+    """Set track solo state"""
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_track_solo", {"track_index": track_index, "solo": solo})
+        return f"Set track {track_index} solo to {solo}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def set_track_arm(ctx: Context, track_index: int, arm: bool) -> str:
+    """Set track arm/record enable state"""
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_track_arm", {"track_index": track_index, "arm": arm})
+        return f"Set track {track_index} arm to {arm}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def delete_track(ctx: Context, track_index: int) -> str:
+    """Delete a track"""
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("delete_track", {"track_index": track_index})
+        return f"Deleted track {track_index}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def duplicate_track(ctx: Context, track_index: int) -> str:
+    """Duplicate a track"""
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("duplicate_track", {"track_index": track_index})
+        return f"Duplicated track {track_index} to index {result.get('new_track_index')}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+# ============================================================================
+# CLIP CONTROL TOOLS
+# ============================================================================
+
+@mcp.tool()
+def get_clip_info(ctx: Context, track_index: int, clip_index: int) -> str:
+    """Get detailed information about a clip"""
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("get_clip_info", {"track_index": track_index, "clip_index": clip_index})
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def delete_clip(ctx: Context, track_index: int, clip_index: int) -> str:
+    """Delete a clip"""
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("delete_clip", {"track_index": track_index, "clip_index": clip_index})
+        return f"Deleted clip at track {track_index}, slot {clip_index}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def duplicate_clip(ctx: Context, track_index: int, clip_index: int) -> str:
+    """Duplicate a clip to the next available slot"""
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("duplicate_clip", {"track_index": track_index, "clip_index": clip_index})
+        return f"Duplicated clip to slot {result.get('target_clip_index')}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def set_clip_loop(ctx: Context, track_index: int, clip_index: int, loop_start: float, loop_end: Optional[float] = None, loop_enabled: bool = True) -> str:
+    """Set clip loop parameters"""
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_clip_loop", {
+            "track_index": track_index,
+            "clip_index": clip_index,
+            "loop_start": loop_start,
+            "loop_end": loop_end,
+            "loop_enabled": loop_enabled
+        })
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def set_clip_color(ctx: Context, track_index: int, clip_index: int, color: int) -> str:
+    """Set clip color (color index 0-69)"""
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_clip_color", {"track_index": track_index, "clip_index": clip_index, "color": color})
+        return f"Set clip color to {color}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+# ============================================================================
+# AUTOMATION TOOLS
+# ============================================================================
+
+@mcp.tool()
+def add_automation_point(ctx: Context, track_index: int, device_index: int, parameter_index: int, time: float, value: float) -> str:
+    """Add an automation point to a parameter"""
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("add_automation_point", {
+            "track_index": track_index,
+            "device_index": device_index,
+            "parameter_index": parameter_index,
+            "time": time,
+            "value": value
+        })
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def clear_automation(ctx: Context, track_index: int, device_index: int, parameter_index: int) -> str:
+    """Clear automation for a parameter"""
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("clear_automation", {
+            "track_index": track_index,
+            "device_index": device_index,
+            "parameter_index": parameter_index
+        })
+        return f"Cleared automation for parameter {parameter_index}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+# ============================================================================
+# SCENE CONTROL TOOLS
+# ============================================================================
+
+@mcp.tool()
+def get_scenes_info(ctx: Context) -> str:
+    """Get information about all scenes"""
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("get_scenes_info")
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def create_scene(ctx: Context, index: int = -1) -> str:
+    """Create a new scene at index (-1 = end)"""
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("create_scene", {"index": index})
+        return f"Created scene at index {result.get('scene_index')}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def delete_scene(ctx: Context, index: int) -> str:
+    """Delete a scene"""
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("delete_scene", {"index": index})
+        return f"Deleted scene {index}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def fire_scene(ctx: Context, index: int) -> str:
+    """Fire/trigger a scene"""
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("fire_scene", {"index": index})
+        return f"Fired scene {index}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+# ============================================================================
+# TRANSPORT & TIMING TOOLS
+# ============================================================================
+
+@mcp.tool()
+def get_playback_position(ctx: Context) -> str:
+    """Get current playback position and loop state"""
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("get_playback_position")
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def set_loop_start(ctx: Context, position: float) -> str:
+    """Set arrangement loop start position (in beats)"""
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_loop_start", {"position": position})
+        return f"Set loop start to {position}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def set_loop_end(ctx: Context, position: float) -> str:
+    """Set arrangement loop end position (in beats)"""
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_loop_end", {"position": position})
+        return f"Set loop end to {position}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def set_playback_position(ctx: Context, position: float) -> str:
+    """Set playback position (in beats)"""
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_playback_position", {"position": position})
+        return f"Set playback position to {position}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def set_metronome(ctx: Context, enabled: bool) -> str:
+    """Enable or disable metronome"""
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_metronome", {"enabled": enabled})
+        return f"Set metronome to {enabled}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+# ============================================================================
+# ADVANCED TOOLS
+# ============================================================================
+
+@mcp.tool()
+def quantize_notes(ctx: Context, track_index: int, clip_index: int, quantize_to: float = 0.25) -> str:
+    """
+    Quantize notes in a clip.
+
+    Parameters:
+    - track_index: Track index
+    - clip_index: Clip slot index
+    - quantize_to: Quantization grid in beats (0.25 = 16th note, 0.5 = 8th note, 1.0 = quarter note)
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("quantize_notes", {
+            "track_index": track_index,
+            "clip_index": clip_index,
+            "quantize_to": quantize_to
+        })
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def transpose_notes(ctx: Context, track_index: int, clip_index: int, semitones: int) -> str:
+    """
+    Transpose all notes in a clip.
+
+    Parameters:
+    - track_index: Track index
+    - clip_index: Clip slot index
+    - semitones: Number of semitones to transpose (positive or negative)
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("transpose_notes", {
+            "track_index": track_index,
+            "clip_index": clip_index,
+            "semitones": semitones
+        })
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def create_audio_track(ctx: Context, index: int = -1) -> str:
+    """Create a new audio track at index (-1 = end)"""
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("create_audio_track", {"index": index})
+        return f"Created audio track '{result.get('name')}' at index {result.get('index')}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+# ============================================================================
+# PLUGIN SUPPORT TOOLS
+# ============================================================================
+
+@mcp.tool()
+def get_third_party_plugins(
+    ctx: Context,
+    creator: Optional[str] = None,
+    plugin_type: Optional[str] = None,
+    format: Optional[str] = None
+) -> str:
+    """
+    Get 3rd party VST/AU/AAX plugins ONLY (excludes Ableton native devices).
+    This is the recommended way to find plugins like FabFilter, Waves, Arturia, etc.
+
+    Parameters:
+    - creator: Filter by plugin creator/manufacturer (e.g., "FabFilter", "Waves", "Arturia")
+               Uses Ableton's native manufacturer metadata from the plugin.
+    - plugin_type: Filter by type ("instrument", "audio_effect", "midi_effect")
+    - format: Filter by format ("VST2", "VST3", "AU", "AUv2", "AAX")
+
+    Returns JSON with plugins array. Each plugin contains:
+    {
+      "name": "FabFilter Pro-Q 3",        // Full plugin name
+      "uri": "query:Plugins#...",         // URI for loading (use with load_instrument_or_effect)
+      "vendor": "FabFilter",              // Creator/manufacturer (from Ableton's native metadata)
+      "format": "VST2",                   // Plugin format (detected from URI)
+      "type": "audio_effect"              // Plugin type (detected from name)
+    }
+
+    Examples:
+    - get_third_party_plugins(creator="FabFilter") → All FabFilter plugins
+    - get_third_party_plugins(plugin_type="audio_effect") → All 3rd party effects
+    - get_third_party_plugins(creator="FabFilter", plugin_type="audio_effect") → FabFilter effects only
+    - get_third_party_plugins() → All 3rd party plugins
+
+    Workflow:
+    1. Call this tool with optional filters
+    2. Find desired plugin in results (the 'vendor' field contains the manufacturer)
+    3. Use load_instrument_or_effect(track_index, plugin['uri']) to load it
+    """
+    try:
+        ableton = get_ableton_connection()
+        # Send filters to Ableton for efficient filtering at the browser level
+        result = ableton.send_command("get_third_party_plugins", {
+            "creator": creator,
+            "plugin_type": plugin_type,
+            "format": format
+        })
+
+        if "plugins" not in result:
+            return json.dumps(result, indent=2)
+
+        filtered_result = {
+            "plugins": result["plugins"],
+            "count": result["count"],
+            "filters_applied": {
+                "creator": creator,
+                "plugin_type": plugin_type,
+                "format": format
+            }
+        }
+
+        return json.dumps(filtered_result, indent=2)
+    except Exception as e:
+        logger.error(f"Error getting third party plugins: {str(e)}")
+        return f"Error getting third party plugins: {str(e)}"
+
+@mcp.tool()
+def get_plugins_list(ctx: Context, plugin_type: str = "all") -> str:
+    """
+    Get list of available plugins from Ableton's browser (includes native + 3rd party).
+
+    NOTE: For 3rd party plugins (VST/AU/AAX), use get_third_party_plugins() instead.
+    This tool includes Ableton's native devices which can be confusing.
+
+    Parameters:
+    - plugin_type: Type of plugins ('all', 'instruments', 'audio_effects', 'midi_effects')
+
+    Returns:
+    - JSON with plugins array containing {name, uri, category}
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("get_plugins_list", {"plugin_type": plugin_type})
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        logger.error(f"Error getting plugins list: {str(e)}")
+        return f"Error getting plugins list: {str(e)}"
 
 # Main execution
 def main():

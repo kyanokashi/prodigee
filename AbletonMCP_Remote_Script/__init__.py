@@ -233,12 +233,51 @@ class AbletonMCP(ControlSurface):
                 track_index = params.get("track_index", 0)
                 clip_index = params.get("clip_index", 0)
                 response["result"] = self._get_notes_from_clip(track_index, clip_index)
+            elif command_type == "get_clip_info":
+                track_index = params.get("track_index", 0)
+                clip_index = params.get("clip_index", 0)
+                response["result"] = self._get_clip_info(track_index, clip_index)
+            elif command_type == "get_scenes_info":
+                response["result"] = self._get_scenes_info()
+            elif command_type == "get_playback_position":
+                response["result"] = self._get_playback_position()
+            elif command_type == "get_plugins_list":
+                plugin_type = params.get("plugin_type", "all")
+                response["result"] = self._get_plugins_list(plugin_type)
+            elif command_type == "get_third_party_plugins":
+                creator = params.get("creator", None)
+                plugin_type = params.get("plugin_type", None)
+                format_filter = params.get("format", None)
+                response["result"] = self._get_third_party_plugins(creator, plugin_type, format_filter)
+            elif command_type == "get_rack_chain_devices":
+                track_index = params.get("track_index", 0)
+                device_index = params.get("device_index", 0)
+                chain_index = params.get("chain_index", 0)
+                response["result"] = self._get_rack_chain_devices(track_index, device_index, chain_index)
+            elif command_type == "get_rack_chain_device_parameters":
+                track_index = params.get("track_index", 0)
+                device_index = params.get("device_index", 0)
+                chain_index = params.get("chain_index", 0)
+                chain_device_index = params.get("chain_device_index", 0)
+                response["result"] = self._get_rack_chain_device_parameters(track_index, device_index, chain_index, chain_device_index)
+            elif command_type == "get_rack_macro_mappings":
+                track_index = params.get("track_index", 0)
+                device_index = params.get("device_index", 0)
+                response["result"] = self._get_rack_macro_mappings(track_index, device_index)
             # Commands that modify Live's state should be scheduled on the main thread
             elif command_type in ["create_midi_track", "set_track_name",
                                  "create_clip", "add_notes_to_clip", "add_new_notes_to_clip", "set_clip_name",
+                                 "remove_notes_from_clip", "modify_notes_in_clip", "select_notes_from_clip",
+                                 "set_track_volume", "set_track_pan", "set_track_mute", "set_track_solo", "set_track_arm",
+                                 "delete_track", "delete_clip", "duplicate_clip", "duplicate_track",
+                                 "set_clip_loop", "set_clip_color",
+                                 "add_automation_point", "clear_automation",
+                                 "create_scene", "delete_scene", "fire_scene",
+                                 "set_loop_start", "set_loop_end", "set_playback_position", "set_metronome",
+                                 "quantize_notes", "transpose_notes", "create_audio_track",
                                  "set_tempo", "fire_clip", "stop_clip",
                                  "start_playback", "stop_playback", "load_browser_item",
-                                 "set_device_parameter"]:
+                                 "set_device_parameter", "map_parameter_to_macro"]:
                 # Use a thread-safe approach with a response queue
                 response_queue = queue.Queue()
                 
@@ -303,9 +342,88 @@ class AbletonMCP(ControlSurface):
                             parameter_index = params.get("parameter_index", None)
                             value = params.get("value", None)
                             result = self._set_device_parameter(track_index, device_index, parameter_name, parameter_index, value)
-    
+                        elif command_type == "map_parameter_to_macro":
+                            track_index = params.get("track_index", 0)
+                            device_index = params.get("device_index", 0)
+                            chain_index = params.get("chain_index", 0)
+                            chain_device_index = params.get("chain_device_index", 0)
+                            parameter_index = params.get("parameter_index", 0)
+                            macro_index = params.get("macro_index", 0)
+                            result = self._map_parameter_to_macro(track_index, device_index, chain_index, chain_device_index, parameter_index, macro_index)
+                        # Note manipulation
+                        elif command_type == "remove_notes_from_clip":
+                            result = self._remove_notes_from_clip(params.get("track_index", 0), params.get("clip_index", 0),
+                                                                  params.get("note_ids", None), params.get("from_time", None),
+                                                                  params.get("to_time", None), params.get("from_pitch", None),
+                                                                  params.get("to_pitch", None))
+                        elif command_type == "modify_notes_in_clip":
+                            result = self._modify_notes_in_clip(params.get("track_index", 0), params.get("clip_index", 0),
+                                                               params.get("modifications", []))
+                        elif command_type == "select_notes_from_clip":
+                            result = self._select_notes_from_clip(params.get("track_index", 0), params.get("clip_index", 0),
+                                                                  params.get("from_time", 0), params.get("to_time", None),
+                                                                  params.get("from_pitch", 0), params.get("to_pitch", 127))
+                        # Track & mixer control
+                        elif command_type == "set_track_volume":
+                            result = self._set_track_volume(params.get("track_index", 0), params.get("volume", 0.85))
+                        elif command_type == "set_track_pan":
+                            result = self._set_track_pan(params.get("track_index", 0), params.get("pan", 0.0))
+                        elif command_type == "set_track_mute":
+                            result = self._set_track_mute(params.get("track_index", 0), params.get("mute", False))
+                        elif command_type == "set_track_solo":
+                            result = self._set_track_solo(params.get("track_index", 0), params.get("solo", False))
+                        elif command_type == "set_track_arm":
+                            result = self._set_track_arm(params.get("track_index", 0), params.get("arm", False))
+                        elif command_type == "delete_track":
+                            result = self._delete_track(params.get("track_index", 0))
+                        elif command_type == "duplicate_track":
+                            result = self._duplicate_track(params.get("track_index", 0))
+                        # Clip control
+                        elif command_type == "delete_clip":
+                            result = self._delete_clip(params.get("track_index", 0), params.get("clip_index", 0))
+                        elif command_type == "duplicate_clip":
+                            result = self._duplicate_clip(params.get("track_index", 0), params.get("clip_index", 0))
+                        elif command_type == "set_clip_loop":
+                            result = self._set_clip_loop(params.get("track_index", 0), params.get("clip_index", 0),
+                                                        params.get("loop_start", 0.0), params.get("loop_end", None),
+                                                        params.get("loop_enabled", True))
+                        elif command_type == "set_clip_color":
+                            result = self._set_clip_color(params.get("track_index", 0), params.get("clip_index", 0),
+                                                         params.get("color", 0))
+                        # Automation
+                        elif command_type == "add_automation_point":
+                            result = self._add_automation_point(params.get("track_index", 0), params.get("device_index", 0),
+                                                               params.get("parameter_index", 0), params.get("time", 0.0),
+                                                               params.get("value", 0.5))
+                        elif command_type == "clear_automation":
+                            result = self._clear_automation(params.get("track_index", 0), params.get("device_index", 0),
+                                                           params.get("parameter_index", 0))
+                        # Scene control
+                        elif command_type == "create_scene":
+                            result = self._create_scene(params.get("index", -1))
+                        elif command_type == "delete_scene":
+                            result = self._delete_scene(params.get("index", 0))
+                        elif command_type == "fire_scene":
+                            result = self._fire_scene(params.get("index", 0))
+                        # Transport & timing
+                        elif command_type == "set_loop_start":
+                            result = self._set_loop_start(params.get("position", 0.0))
+                        elif command_type == "set_loop_end":
+                            result = self._set_loop_end(params.get("position", 4.0))
+                        elif command_type == "set_playback_position":
+                            result = self._set_playback_position(params.get("position", 0.0))
+                        elif command_type == "set_metronome":
+                            result = self._set_metronome(params.get("enabled", True))
+                        # Advanced
+                        elif command_type == "quantize_notes":
+                            result = self._quantize_notes(params.get("track_index", 0), params.get("clip_index", 0),
+                                                         params.get("quantize_to", 0.25))
+                        elif command_type == "transpose_notes":
+                            result = self._transpose_notes(params.get("track_index", 0), params.get("clip_index", 0),
+                                                          params.get("semitones", 0))
+                        elif command_type == "create_audio_track":
+                            result = self._create_audio_track(params.get("index", -1))
 
-                        
                         # Put the result in the queue
                         response_queue.put({"status": "success", "result": result})
                     except Exception as e:
@@ -912,20 +1030,28 @@ class AbletonMCP(ControlSurface):
             
             # Check if this is a browser with root categories
             if hasattr(browser_or_item, 'instruments'):
-                # Check all main categories
-                categories = [
-                    browser_or_item.instruments,
-                    browser_or_item.sounds,
-                    browser_or_item.drums,
-                    browser_or_item.audio_effects,
-                    browser_or_item.midi_effects
-                ]
-                
+                # Check all main categories including plugins
+                categories = []
+
+                # Add standard categories
+                if hasattr(browser_or_item, 'instruments'):
+                    categories.append(browser_or_item.instruments)
+                if hasattr(browser_or_item, 'sounds'):
+                    categories.append(browser_or_item.sounds)
+                if hasattr(browser_or_item, 'drums'):
+                    categories.append(browser_or_item.drums)
+                if hasattr(browser_or_item, 'audio_effects'):
+                    categories.append(browser_or_item.audio_effects)
+                if hasattr(browser_or_item, 'midi_effects'):
+                    categories.append(browser_or_item.midi_effects)
+                if hasattr(browser_or_item, 'plugins'):
+                    categories.append(browser_or_item.plugins)
+
                 for category in categories:
                     item = self._find_browser_item_by_uri(category, uri, max_depth, current_depth + 1)
                     if item:
                         return item
-                
+
                 return None
             
             # Check if this item has children
@@ -1212,36 +1338,51 @@ class AbletonMCP(ControlSurface):
 
             if device_index < 0 or device_index >= len(track.devices):
                 raise IndexError("Device index out of range")
-            
+
             device = track.devices[device_index]
-            
+
+            # Detect if this is a 3rd party plugin
+            is_plugin = "PluginDevice" in device.class_name or "AuPluginDevice" in device.class_name
+
             # Get all parameters for the device
             parameters = []
             for param_index, param in enumerate(device.parameters):
-                # Skip parameters that are not automatable or are just for display
-                if not param.is_enabled or param.is_quantized and len(param.value_items) <= 1:
-                    continue
-                
+                # For 3rd party plugins, include ALL parameters (they're all relevant)
+                # For native devices, apply filtering to reduce noise
+                if not is_plugin:
+                    # Skip parameters that are not automatable or are just for display
+                    if not param.is_enabled or param.is_quantized and len(param.value_items) <= 1:
+                        continue
+                else:
+                    # For plugins, only skip if parameter doesn't have a name (internal parameters)
+                    if not hasattr(param, 'name') or not param.name:
+                        continue
+
                 param_info = {
                     "index": param_index,
-                    "name": param.name,
+                    "name": param.name if hasattr(param, 'name') else "Parameter " + str(param_index),
                     "value": param.value,
                     "min": param.min,
                     "max": param.max,
+                    "is_enabled": param.is_enabled if hasattr(param, 'is_enabled') else True,
+                    "is_quantized": param.is_quantized if hasattr(param, 'is_quantized') else False,
                 }
-                
+
                 # Add value items for quantized parameters (e.g., filter types)
-                if param.is_quantized and len(param.value_items) > 1:
+                if hasattr(param, 'is_quantized') and param.is_quantized and hasattr(param, 'value_items') and len(param.value_items) > 1:
                     param_info["value_items"] = [str(item) for item in param.value_items]
                     param_info["value_item_index"] = int(param.value)
                     param_info["value_item"] = str(param.value_items[int(param.value)])
-                
+
                 parameters.append(param_info)
-            
+
             return {
                 "device_name": device.name,
                 "device_class": device.class_name,
                 "device_type": self._get_device_type(device),
+                "is_plugin": is_plugin,
+                "parameter_count": len(parameters),
+                "total_parameters": len(device.parameters),
                 "parameters": parameters
             }
         except Exception as e:
@@ -1342,4 +1483,1054 @@ class AbletonMCP(ControlSurface):
             self.log_message("Error setting device parameter: " + str(e))
             self.log_message(traceback.format_exc())
             raise
-    
+
+    # ============================================================================
+    # MACRO CONTROL METHODS
+    # ============================================================================
+
+    def _map_parameter_to_macro(self, track_index, device_index, chain_index, chain_device_index, parameter_index, macro_index):
+        """
+        Map a device parameter to a macro control in a Device Rack.
+        This is the recommended way to control 3rd party plugin parameters.
+
+        Args:
+            track_index: Index of the track
+            device_index: Index of the rack device
+            chain_index: Index of the chain (0 for single-chain racks)
+            chain_device_index: Index of the device inside the chain
+            parameter_index: Index of the parameter on the chain device
+            macro_index: Index of the macro control (0-7 for standard racks)
+
+        Note: The device at device_index must be a Rack (Instrument/Audio/MIDI/Drum Rack).
+              To control 3rd party plugins, first group them in a Rack, then map parameters to macros.
+        """
+        try:
+            if track_index < 0 or track_index >= len(self._song.tracks):
+                raise IndexError("Track index out of range")
+
+            track = self._song.tracks[track_index]
+
+            if device_index < 0 or device_index >= len(track.devices):
+                raise IndexError("Device index out of range")
+
+            device = track.devices[device_index]
+
+            # Check if device is a rack
+            if not hasattr(device, 'chains'):
+                raise ValueError(f"Device '{device.name}' is not a Device Rack. Only Racks support macro mapping.")
+
+            # Get the chain
+            if chain_index < 0 or chain_index >= len(device.chains):
+                raise IndexError(f"Chain index {chain_index} out of range (rack has {len(device.chains)} chains)")
+
+            chain = device.chains[chain_index]
+
+            if chain_device_index < 0 or chain_device_index >= len(chain.devices):
+                raise IndexError(f"Device index {chain_device_index} out of range in chain")
+
+            # Get the device inside the rack chain
+            inner_device = chain.devices[chain_device_index]
+
+            if parameter_index < 0 or parameter_index >= len(inner_device.parameters):
+                raise IndexError(f"Parameter index {parameter_index} out of range for device '{inner_device.name}'")
+
+            parameter = inner_device.parameters[parameter_index]
+
+            # Get the macro parameter
+            if macro_index < 0 or macro_index >= 8:
+                raise IndexError("Macro index must be 0-7")
+
+            macro_parameter = device.parameters[macro_index + 1]  # +1 because parameter[0] is Device On
+
+            # Map the parameter to the macro
+            macro_parameter.value = parameter.value
+            macro_parameter.add_parameter_to_map(parameter)
+
+            return {
+                "rack_name": device.name,
+                "chain_index": chain_index,
+                "device_name": inner_device.name,
+                "parameter_name": parameter.name,
+                "parameter_index": parameter_index,
+                "macro_index": macro_index,
+                "macro_name": f"Macro {macro_index + 1}",
+                "current_value": parameter.value
+            }
+        except Exception as e:
+            self.log_message("Error mapping parameter to macro: " + str(e))
+            self.log_message(traceback.format_exc())
+            raise
+
+    def _get_rack_macro_mappings(self, track_index, device_index):
+        """
+        Get all macro mappings for a Device Rack.
+
+        Args:
+            track_index: Index of the track
+            device_index: Index of the rack device
+
+        Returns information about each macro and what parameters it controls.
+        """
+        try:
+            if track_index < 0 or track_index >= len(self._song.tracks):
+                raise IndexError("Track index out of range")
+
+            track = self._song.tracks[track_index]
+
+            if device_index < 0 or device_index >= len(track.devices):
+                raise IndexError("Device index out of range")
+
+            device = track.devices[device_index]
+
+            # Check if device is a rack
+            if not hasattr(device, 'chains'):
+                raise ValueError(f"Device '{device.name}' is not a Device Rack")
+
+            macros = []
+            for macro_idx in range(8):
+                # Macros are parameters 1-8 (0 is Device On)
+                macro_param = device.parameters[macro_idx + 1]
+
+                macro_info = {
+                    "macro_index": macro_idx,
+                    "macro_name": macro_param.name,
+                    "value": macro_param.value,
+                    "min": macro_param.min,
+                    "max": macro_param.max,
+                    "mapped_parameters": []
+                }
+
+                # Get mapped parameters (if available via API)
+                # Note: Live API doesn't directly expose parameter mappings,
+                # but we can provide macro control info
+
+                macros.append(macro_info)
+
+            return {
+                "rack_name": device.name,
+                "device_type": self._get_device_type(device),
+                "macros": macros
+            }
+        except Exception as e:
+            self.log_message("Error getting rack macro mappings: " + str(e))
+            self.log_message(traceback.format_exc())
+            raise
+
+    def _get_rack_chain_devices(self, track_index, device_index, chain_index=0):
+        """
+        Get all devices inside a rack's chain.
+
+        Args:
+            track_index: Index of the track
+            device_index: Index of the rack device
+            chain_index: Index of the chain (default 0 for single-chain racks)
+
+        Returns list of devices inside the rack's chain.
+        """
+        try:
+            if track_index < 0 or track_index >= len(self._song.tracks):
+                raise IndexError("Track index out of range")
+
+            track = self._song.tracks[track_index]
+
+            if device_index < 0 or device_index >= len(track.devices):
+                raise IndexError("Device index out of range")
+
+            device = track.devices[device_index]
+
+            # Check if device is a rack
+            if not hasattr(device, 'chains'):
+                raise ValueError(f"Device '{device.name}' is not a Device Rack")
+
+            if chain_index < 0 or chain_index >= len(device.chains):
+                raise IndexError(f"Chain index {chain_index} out of range (rack has {len(device.chains)} chains)")
+
+            chain = device.chains[chain_index]
+
+            devices = []
+            for dev_idx, chain_device in enumerate(chain.devices):
+                device_info = {
+                    "index": dev_idx,
+                    "name": chain_device.name,
+                    "class_name": chain_device.class_name,
+                    "type": self._get_device_type(chain_device),
+                    "parameter_count": len(chain_device.parameters) if hasattr(chain_device, 'parameters') else 0
+                }
+                devices.append(device_info)
+
+            return {
+                "rack_name": device.name,
+                "chain_index": chain_index,
+                "chain_count": len(device.chains),
+                "devices": devices
+            }
+        except Exception as e:
+            self.log_message("Error getting rack chain devices: " + str(e))
+            self.log_message(traceback.format_exc())
+            raise
+
+    def _get_rack_chain_device_parameters(self, track_index, device_index, chain_index, chain_device_index):
+        """
+        Get parameters from a device inside a rack's chain.
+
+        Args:
+            track_index: Index of the track
+            device_index: Index of the rack device
+            chain_index: Index of the chain
+            chain_device_index: Index of the device inside the chain
+
+        Returns all parameters for the device inside the rack's chain.
+        """
+        try:
+            if track_index < 0 or track_index >= len(self._song.tracks):
+                raise IndexError("Track index out of range")
+
+            track = self._song.tracks[track_index]
+
+            if device_index < 0 or device_index >= len(track.devices):
+                raise IndexError("Device index out of range")
+
+            device = track.devices[device_index]
+
+            # Check if device is a rack
+            if not hasattr(device, 'chains'):
+                raise ValueError(f"Device '{device.name}' is not a Device Rack")
+
+            if chain_index < 0 or chain_index >= len(device.chains):
+                raise IndexError(f"Chain index {chain_index} out of range")
+
+            chain = device.chains[chain_index]
+
+            if chain_device_index < 0 or chain_device_index >= len(chain.devices):
+                raise IndexError(f"Device index {chain_device_index} out of range in chain")
+
+            chain_device = chain.devices[chain_device_index]
+
+            # Get all parameters
+            parameters = []
+            for param_idx, param in enumerate(chain_device.parameters):
+                try:
+                    param_info = {
+                        "index": param_idx,
+                        "name": param.name if hasattr(param, 'name') else f"Parameter {param_idx}",
+                        "value": param.value if hasattr(param, 'value') else None,
+                        "min": param.min if hasattr(param, 'min') else None,
+                        "max": param.max if hasattr(param, 'max') else None,
+                        "is_enabled": param.is_enabled if hasattr(param, 'is_enabled') else True,
+                    }
+
+                    if hasattr(param, 'is_quantized') and param.is_quantized and hasattr(param, 'value_items') and len(param.value_items) > 1:
+                        param_info["value_items"] = [str(item) for item in param.value_items]
+                        param_info["value_item_index"] = int(param.value)
+                        param_info["value_item"] = str(param.value_items[int(param.value)])
+
+                    parameters.append(param_info)
+                except Exception as e:
+                    self.log_message(f"Error reading parameter {param_idx}: {str(e)}")
+
+            return {
+                "rack_name": device.name,
+                "chain_index": chain_index,
+                "device_index": chain_device_index,
+                "device_name": chain_device.name,
+                "device_class": chain_device.class_name,
+                "device_type": self._get_device_type(chain_device),
+                "parameters": parameters
+            }
+        except Exception as e:
+            self.log_message("Error getting rack chain device parameters: " + str(e))
+            self.log_message(traceback.format_exc())
+            raise
+
+    # ============================================================================
+    # NOTE MANIPULATION METHODS
+    # ============================================================================
+
+    def _remove_notes_from_clip(self, track_index, clip_index, note_ids=None, from_time=None, to_time=None, from_pitch=None, to_pitch=None):
+        """Remove notes from a clip by note IDs or time/pitch range"""
+        try:
+            track = self._song.tracks[track_index]
+            clip_slot = track.clip_slots[clip_index]
+            if not clip_slot.has_clip:
+                raise Exception("No clip in slot")
+            clip = clip_slot.clip
+
+            if note_ids:
+                # Remove specific notes by ID
+                clip.remove_notes_by_id(tuple(note_ids))
+                return {"removed_count": len(note_ids)}
+            else:
+                # Remove notes by range
+                if from_time is None:
+                    from_time = 0
+                if to_time is None:
+                    to_time = clip.length
+                if from_pitch is None:
+                    from_pitch = 0
+                if to_pitch is None:
+                    to_pitch = 127
+
+                clip.remove_notes_extended(from_time, from_pitch, to_time - from_time, to_pitch - from_pitch + 1)
+                return {"removed_range": {"from_time": from_time, "to_time": to_time, "from_pitch": from_pitch, "to_pitch": to_pitch}}
+        except Exception as e:
+            self.log_message("Error removing notes: " + str(e))
+            self.log_message(traceback.format_exc())
+            raise
+
+    def _modify_notes_in_clip(self, track_index, clip_index, modifications):
+        """Modify existing notes in a clip (Live 11+)"""
+        try:
+            track = self._song.tracks[track_index]
+            clip_slot = track.clip_slots[clip_index]
+            if not clip_slot.has_clip:
+                raise Exception("No clip in slot")
+            clip = clip_slot.clip
+
+            # Convert modifications to Live format
+            live_modifications = []
+            for mod in modifications:
+                mod_dict = {"note_id": mod["note_id"]}
+                if "pitch" in mod:
+                    mod_dict["pitch"] = mod["pitch"]
+                if "start_time" in mod:
+                    mod_dict["start_time"] = mod["start_time"]
+                if "duration" in mod:
+                    mod_dict["duration"] = mod["duration"]
+                if "velocity" in mod:
+                    mod_dict["velocity"] = mod["velocity"]
+                if "mute" in mod:
+                    mod_dict["mute"] = mod["mute"]
+                if "velocity_deviation" in mod:
+                    mod_dict["velocity_deviation"] = mod["velocity_deviation"]
+                if "release_velocity" in mod:
+                    mod_dict["release_velocity"] = mod["release_velocity"]
+                if "probability" in mod:
+                    mod_dict["probability"] = mod["probability"]
+
+                live_modifications.append(mod_dict)
+
+            clip.apply_note_modifications(tuple(live_modifications))
+            return {"modified_count": len(modifications)}
+        except Exception as e:
+            self.log_message("Error modifying notes: " + str(e))
+            self.log_message(traceback.format_exc())
+            raise
+
+    def _select_notes_from_clip(self, track_index, clip_index, from_time, to_time, from_pitch, to_pitch):
+        """Select/filter notes from a clip by time and pitch range"""
+        try:
+            track = self._song.tracks[track_index]
+            clip_slot = track.clip_slots[clip_index]
+            if not clip_slot.has_clip:
+                raise Exception("No clip in slot")
+            clip = clip_slot.clip
+
+            if to_time is None:
+                to_time = clip.length
+
+            # Get notes in range
+            notes_data = clip.get_notes_extended(from_time, from_pitch, to_time - from_time, to_pitch - from_pitch + 1)
+
+            notes_list = []
+            for note in notes_data:
+                note_dict = {
+                    "note_id": note.note_id,
+                    "pitch": note.pitch,
+                    "start_time": note.start_time,
+                    "duration": note.duration,
+                    "velocity": note.velocity,
+                    "mute": note.mute
+                }
+                if hasattr(note, 'velocity_deviation'):
+                    note_dict["velocity_deviation"] = note.velocity_deviation
+                if hasattr(note, 'release_velocity'):
+                    note_dict["release_velocity"] = note.release_velocity
+                if hasattr(note, 'probability'):
+                    note_dict["probability"] = note.probability
+                notes_list.append(note_dict)
+
+            return {"notes": notes_list, "count": len(notes_list)}
+        except Exception as e:
+            self.log_message("Error selecting notes: " + str(e))
+            self.log_message(traceback.format_exc())
+            raise
+
+    # ============================================================================
+    # TRACK & MIXER CONTROL METHODS
+    # ============================================================================
+
+    def _set_track_volume(self, track_index, volume):
+        """Set track volume (0.0 to 1.0)"""
+        try:
+            track = self._song.tracks[track_index]
+            track.mixer_device.volume.value = volume
+            return {"volume": track.mixer_device.volume.value}
+        except Exception as e:
+            self.log_message("Error setting track volume: " + str(e))
+            raise
+
+    def _set_track_pan(self, track_index, pan):
+        """Set track pan (-1.0 to 1.0)"""
+        try:
+            track = self._song.tracks[track_index]
+            track.mixer_device.panning.value = pan
+            return {"pan": track.mixer_device.panning.value}
+        except Exception as e:
+            self.log_message("Error setting track pan: " + str(e))
+            raise
+
+    def _set_track_mute(self, track_index, mute):
+        """Set track mute state"""
+        try:
+            track = self._song.tracks[track_index]
+            track.mute = mute
+            return {"mute": track.mute}
+        except Exception as e:
+            self.log_message("Error setting track mute: " + str(e))
+            raise
+
+    def _set_track_solo(self, track_index, solo):
+        """Set track solo state"""
+        try:
+            track = self._song.tracks[track_index]
+            track.solo = solo
+            return {"solo": track.solo}
+        except Exception as e:
+            self.log_message("Error setting track solo: " + str(e))
+            raise
+
+    def _set_track_arm(self, track_index, arm):
+        """Set track arm/record enable state"""
+        try:
+            track = self._song.tracks[track_index]
+            if track.can_be_armed:
+                track.arm = arm
+                return {"arm": track.arm}
+            else:
+                raise Exception("Track cannot be armed")
+        except Exception as e:
+            self.log_message("Error setting track arm: " + str(e))
+            raise
+
+    def _delete_track(self, track_index):
+        """Delete a track"""
+        try:
+            self._song.delete_track(track_index)
+            return {"deleted": True, "track_index": track_index}
+        except Exception as e:
+            self.log_message("Error deleting track: " + str(e))
+            raise
+
+    def _duplicate_track(self, track_index):
+        """Duplicate a track"""
+        try:
+            self._song.duplicate_track(track_index)
+            return {"duplicated": True, "new_track_index": track_index + 1}
+        except Exception as e:
+            self.log_message("Error duplicating track: " + str(e))
+            raise
+
+    # ============================================================================
+    # CLIP CONTROL METHODS
+    # ============================================================================
+
+    def _get_clip_info(self, track_index, clip_index):
+        """Get detailed information about a clip"""
+        try:
+            track = self._song.tracks[track_index]
+            clip_slot = track.clip_slots[clip_index]
+
+            if not clip_slot.has_clip:
+                return {"has_clip": False}
+
+            clip = clip_slot.clip
+
+            result = {
+                "has_clip": True,
+                "name": clip.name,
+                "length": clip.length,
+                "loop_start": clip.loop_start,
+                "loop_end": clip.loop_end,
+                "looping": clip.looping,
+                "start_marker": clip.start_marker,
+                "end_marker": clip.end_marker,
+                "is_playing": clip.is_playing,
+                "is_triggered": clip.is_triggered,
+                "is_recording": clip.is_recording,
+                "is_midi_clip": clip.is_midi_clip,
+                "is_audio_clip": clip.is_audio_clip,
+                "muted": clip.muted,
+                "color": clip.color if hasattr(clip, 'color') else None,
+            }
+
+            return result
+        except Exception as e:
+            self.log_message("Error getting clip info: " + str(e))
+            raise
+
+    def _delete_clip(self, track_index, clip_index):
+        """Delete a clip"""
+        try:
+            track = self._song.tracks[track_index]
+            clip_slot = track.clip_slots[clip_index]
+            if clip_slot.has_clip:
+                clip_slot.delete_clip()
+                return {"deleted": True}
+            else:
+                return {"deleted": False, "message": "No clip in slot"}
+        except Exception as e:
+            self.log_message("Error deleting clip: " + str(e))
+            raise
+
+    def _duplicate_clip(self, track_index, clip_index):
+        """Duplicate a clip to the next available slot"""
+        try:
+            track = self._song.tracks[track_index]
+            source_slot = track.clip_slots[clip_index]
+
+            if not source_slot.has_clip:
+                raise Exception("No clip to duplicate")
+
+            # Find next empty slot
+            target_index = clip_index + 1
+            while target_index < len(track.clip_slots) and track.clip_slots[target_index].has_clip:
+                target_index += 1
+
+            if target_index >= len(track.clip_slots):
+                raise Exception("No empty slot available for duplication")
+
+            source_slot.duplicate_clip_to(track.clip_slots[target_index])
+            return {"duplicated": True, "target_clip_index": target_index}
+        except Exception as e:
+            self.log_message("Error duplicating clip: " + str(e))
+            raise
+
+    def _set_clip_loop(self, track_index, clip_index, loop_start, loop_end, loop_enabled):
+        """Set clip loop parameters"""
+        try:
+            track = self._song.tracks[track_index]
+            clip_slot = track.clip_slots[clip_index]
+            if not clip_slot.has_clip:
+                raise Exception("No clip in slot")
+            clip = clip_slot.clip
+
+            if loop_end is None:
+                loop_end = clip.length
+
+            clip.loop_start = loop_start
+            clip.loop_end = loop_end
+            clip.looping = loop_enabled
+
+            return {
+                "loop_start": clip.loop_start,
+                "loop_end": clip.loop_end,
+                "looping": clip.looping
+            }
+        except Exception as e:
+            self.log_message("Error setting clip loop: " + str(e))
+            raise
+
+    def _set_clip_color(self, track_index, clip_index, color):
+        """Set clip color (color index)"""
+        try:
+            track = self._song.tracks[track_index]
+            clip_slot = track.clip_slots[clip_index]
+            if not clip_slot.has_clip:
+                raise Exception("No clip in slot")
+            clip = clip_slot.clip
+
+            if hasattr(clip, 'color'):
+                clip.color = color
+                return {"color": clip.color}
+            else:
+                raise Exception("Clip color not supported in this version of Live")
+        except Exception as e:
+            self.log_message("Error setting clip color: " + str(e))
+            raise
+
+    # ============================================================================
+    # AUTOMATION METHODS
+    # ============================================================================
+
+    def _add_automation_point(self, track_index, device_index, parameter_index, time, value):
+        """Add an automation point to a parameter"""
+        try:
+            track = self._song.tracks[track_index]
+            device = track.devices[device_index]
+            parameter = device.parameters[parameter_index]
+
+            # Note: This requires accessing automation envelopes which may not be directly
+            # available in all Live versions. This is a simplified implementation.
+            if hasattr(parameter, 'automation_envelope'):
+                envelope = parameter.automation_envelope
+                if envelope:
+                    envelope.insert_step(time, 0, value)
+                    return {"added": True, "time": time, "value": value}
+                else:
+                    raise Exception("Parameter has no automation envelope")
+            else:
+                raise Exception("Automation not supported for this parameter")
+        except Exception as e:
+            self.log_message("Error adding automation point: " + str(e))
+            raise
+
+    def _clear_automation(self, track_index, device_index, parameter_index):
+        """Clear automation for a parameter"""
+        try:
+            track = self._song.tracks[track_index]
+            device = track.devices[device_index]
+            parameter = device.parameters[parameter_index]
+
+            if hasattr(parameter, 'automation_envelope'):
+                envelope = parameter.automation_envelope
+                if envelope:
+                    envelope.clear_envelope()
+                    return {"cleared": True}
+                else:
+                    raise Exception("Parameter has no automation envelope")
+            else:
+                raise Exception("Automation not supported for this parameter")
+        except Exception as e:
+            self.log_message("Error clearing automation: " + str(e))
+            raise
+
+    # ============================================================================
+    # SCENE CONTROL METHODS
+    # ============================================================================
+
+    def _get_scenes_info(self):
+        """Get information about all scenes"""
+        try:
+            scenes = []
+            for i, scene in enumerate(self._song.scenes):
+                scenes.append({
+                    "index": i,
+                    "name": scene.name,
+                    "color": scene.color if hasattr(scene, 'color') else None,
+                    "is_triggered": scene.is_triggered,
+                    "tempo": scene.tempo if hasattr(scene, 'tempo') else None
+                })
+            return {"scenes": scenes, "count": len(scenes)}
+        except Exception as e:
+            self.log_message("Error getting scenes info: " + str(e))
+            raise
+
+    def _create_scene(self, index):
+        """Create a new scene"""
+        try:
+            self._song.create_scene(index)
+            new_index = len(self._song.scenes) - 1 if index == -1 else index
+            return {"created": True, "scene_index": new_index, "name": self._song.scenes[new_index].name}
+        except Exception as e:
+            self.log_message("Error creating scene: " + str(e))
+            raise
+
+    def _delete_scene(self, index):
+        """Delete a scene"""
+        try:
+            self._song.delete_scene(index)
+            return {"deleted": True, "scene_index": index}
+        except Exception as e:
+            self.log_message("Error deleting scene: " + str(e))
+            raise
+
+    def _fire_scene(self, index):
+        """Fire/trigger a scene"""
+        try:
+            self._song.scenes[index].fire()
+            return {"fired": True, "scene_index": index}
+        except Exception as e:
+            self.log_message("Error firing scene: " + str(e))
+            raise
+
+    # ============================================================================
+    # TRANSPORT & TIMING METHODS
+    # ============================================================================
+
+    def _get_playback_position(self):
+        """Get current playback position in beats"""
+        try:
+            return {
+                "position": self._song.current_song_time,
+                "is_playing": self._song.is_playing,
+                "loop_start": self._song.loop_start,
+                "loop_end": self._song.loop_length + self._song.loop_start,
+                "loop_enabled": self._song.loop
+            }
+        except Exception as e:
+            self.log_message("Error getting playback position: " + str(e))
+            raise
+
+    def _set_loop_start(self, position):
+        """Set arrangement loop start position"""
+        try:
+            self._song.loop_start = position
+            return {"loop_start": self._song.loop_start}
+        except Exception as e:
+            self.log_message("Error setting loop start: " + str(e))
+            raise
+
+    def _set_loop_end(self, position):
+        """Set arrangement loop end position"""
+        try:
+            # Live stores loop_length, not loop_end
+            loop_length = position - self._song.loop_start
+            self._song.loop_length = loop_length
+            return {"loop_end": self._song.loop_start + self._song.loop_length}
+        except Exception as e:
+            self.log_message("Error setting loop end: " + str(e))
+            raise
+
+    def _set_playback_position(self, position):
+        """Set playback position in beats"""
+        try:
+            self._song.current_song_time = position
+            return {"position": self._song.current_song_time}
+        except Exception as e:
+            self.log_message("Error setting playback position: " + str(e))
+            raise
+
+    def _set_metronome(self, enabled):
+        """Enable or disable metronome"""
+        try:
+            self._song.metronome = enabled
+            return {"metronome": self._song.metronome}
+        except Exception as e:
+            self.log_message("Error setting metronome: " + str(e))
+            raise
+
+    # ============================================================================
+    # ADVANCED METHODS
+    # ============================================================================
+
+    def _quantize_notes(self, track_index, clip_index, quantize_to):
+        """Quantize notes in a clip"""
+        try:
+            track = self._song.tracks[track_index]
+            clip_slot = track.clip_slots[clip_index]
+            if not clip_slot.has_clip:
+                raise Exception("No clip in slot")
+            clip = clip_slot.clip
+
+            if not clip.is_midi_clip:
+                raise Exception("Clip is not a MIDI clip")
+
+            # Get all notes
+            notes = clip.get_notes_extended(0, 0, clip.length, 128)
+
+            # Quantize and modify each note
+            modifications = []
+            for note in notes:
+                quantized_start = round(note.start_time / quantize_to) * quantize_to
+                modifications.append({
+                    "note_id": note.note_id,
+                    "start_time": quantized_start
+                })
+
+            if modifications:
+                clip.apply_note_modifications(tuple(modifications))
+
+            return {"quantized": True, "note_count": len(modifications), "quantize_to": quantize_to}
+        except Exception as e:
+            self.log_message("Error quantizing notes: " + str(e))
+            raise
+
+    def _transpose_notes(self, track_index, clip_index, semitones):
+        """Transpose all notes in a clip"""
+        try:
+            track = self._song.tracks[track_index]
+            clip_slot = track.clip_slots[clip_index]
+            if not clip_slot.has_clip:
+                raise Exception("No clip in slot")
+            clip = clip_slot.clip
+
+            if not clip.is_midi_clip:
+                raise Exception("Clip is not a MIDI clip")
+
+            # Get all notes
+            notes = clip.get_notes_extended(0, 0, clip.length, 128)
+
+            # Transpose each note
+            modifications = []
+            for note in notes:
+                new_pitch = max(0, min(127, note.pitch + semitones))
+                modifications.append({
+                    "note_id": note.note_id,
+                    "pitch": new_pitch
+                })
+
+            if modifications:
+                clip.apply_note_modifications(tuple(modifications))
+
+            return {"transposed": True, "note_count": len(modifications), "semitones": semitones}
+        except Exception as e:
+            self.log_message("Error transposing notes: " + str(e))
+            raise
+
+    def _create_audio_track(self, index):
+        """Create a new audio track"""
+        try:
+            self._song.create_audio_track(index)
+            new_track_index = len(self._song.tracks) - 1 if index == -1 else index
+            new_track = self._song.tracks[new_track_index]
+            return {"index": new_track_index, "name": new_track.name}
+        except Exception as e:
+            self.log_message("Error creating audio track: " + str(e))
+            raise
+
+    # ============================================================================
+    # PLUGIN SUPPORT METHODS
+    # ============================================================================
+
+    def _get_third_party_plugins(self, creator=None, plugin_type=None, format_filter=None):
+        """
+        Get list of 3rd party plugins (VST/AU/AAX only, excludes Ableton native devices)
+
+        Args:
+            creator: Filter by creator/vendor folder name (e.g., "FabFilter", "Waves")
+            plugin_type: Filter by type ("instrument", "audio_effect", "midi_effect")
+            format_filter: Filter by format folder ("VST", "AUv2", "VST3", etc.)
+        """
+        try:
+            app = self.application()
+            if not app or not hasattr(app, 'browser'):
+                raise RuntimeError("Browser not available")
+
+            all_plugins = []
+            browser = app.browser
+
+            # The "Plug-Ins" category contains all 3rd party VST/AU/AAX plugins
+            if not hasattr(browser, 'plugins'):
+                return {
+                    "plugins": [],
+                    "count": 0,
+                    "message": "Plug-Ins category not found in browser"
+                }
+
+            plugins_category = browser.plugins
+
+            # Helper to detect format from URI
+            def detect_format(uri):
+                if not uri:
+                    return "Unknown"
+                uri_lower = uri.lower()
+                if "vst3" in uri_lower:
+                    return "VST3"
+                elif "vst2" in uri_lower or "vst:" in uri_lower:
+                    return "VST2"
+                elif "auv2" in uri_lower:
+                    return "AUv2"
+                elif "au:" in uri_lower or "audiounit" in uri_lower:
+                    return "AU"
+                elif "aax" in uri_lower:
+                    return "AAX"
+                return "Unknown"
+
+            # Helper to extract vendor from plugin name
+            def extract_vendor_from_name(plugin_name):
+                """Extract vendor from plugin name like 'FabFilter Pro-Q 3' -> 'FabFilter'"""
+                parts = plugin_name.split()
+                if len(parts) > 0 and parts[0]:
+                    return parts[0]
+                return "Unknown"
+
+            # Helper to detect type from name
+            def detect_type(plugin_name):
+                name_lower = plugin_name.lower()
+                # Common instrument indicators
+                if any(word in name_lower for word in ['synth', 'sampler', 'piano', 'drum machine', 'organ', 'bass']):
+                    return "instrument"
+                # Common effect indicators
+                elif any(word in name_lower for word in ['eq', 'compressor', 'reverb', 'delay', 'limiter', 'gate', 'pro-q', 'pro-c', 'pro-l', 'pro-r', 'pro-mb', 'pro-ds', 'pro-g']):
+                    return "audio_effect"
+                # MIDI effect indicators
+                elif any(word in name_lower for word in ['arpeggiator', 'midi', 'note']):
+                    return "midi_effect"
+                return "audio_effect"
+
+            # Collect plugins from vendor folders
+            def collect_from_vendor(vendor_folder, vendor_name):
+                """Collect plugins from a vendor folder, using the folder name as vendor"""
+                vendor_plugins = []
+
+                try:
+                    if hasattr(vendor_folder, 'children') and vendor_folder.children:
+                        for plugin in vendor_folder.children:
+                            try:
+                                if hasattr(plugin, 'is_loadable') and plugin.is_loadable:
+                                    plugin_name = plugin.name if hasattr(plugin, 'name') else "Unknown"
+                                    plugin_uri = plugin.uri if hasattr(plugin, 'uri') else None
+                                    plugin_format = detect_format(plugin_uri)
+                                    plugin_type_detected = detect_type(plugin_name)
+
+                                    # Apply type filter if specified
+                                    if plugin_type and plugin_type_detected.lower() != plugin_type.lower():
+                                        continue
+
+                                    plugin_info = {
+                                        "name": plugin_name,
+                                        "uri": plugin_uri,
+                                        "vendor": vendor_name,  # Use folder name as vendor
+                                        "format": plugin_format,
+                                        "type": plugin_type_detected
+                                    }
+                                    vendor_plugins.append(plugin_info)
+                            except Exception as e:
+                                self.log_message("Error processing plugin: " + str(e))
+                except Exception as e:
+                    self.log_message("Error processing vendor folder: " + str(e))
+
+                return vendor_plugins
+
+            # Iterate through format folders (VST, AUv2, etc.) in the Plug-Ins category
+            if hasattr(plugins_category, 'children') and plugins_category.children:
+                for format_folder in plugins_category.children:
+                    try:
+                        format_name = format_folder.name if hasattr(format_folder, 'name') else "Unknown"
+
+                        # Apply format filter if specified
+                        if format_filter and format_name.lower() != format_filter.lower():
+                            continue
+
+                        # Check if this is a format folder (VST, AUv2, etc.) or direct plugin
+                        if hasattr(format_folder, 'is_loadable') and format_folder.is_loadable:
+                            # Direct plugin (no format/vendor folders)
+                            plugin_name = format_folder.name if hasattr(format_folder, 'name') else "Unknown"
+                            plugin_uri = format_folder.uri if hasattr(format_folder, 'uri') else None
+                            plugin_format = detect_format(plugin_uri)
+                            plugin_vendor = extract_vendor_from_name(plugin_name)
+                            plugin_type_detected = detect_type(plugin_name)
+
+                            # Apply type filter
+                            if plugin_type and plugin_type_detected.lower() != plugin_type.lower():
+                                continue
+
+                            all_plugins.append({
+                                "name": plugin_name,
+                                "uri": plugin_uri,
+                                "vendor": plugin_vendor,
+                                "format": plugin_format,
+                                "type": plugin_type_detected
+                            })
+                        elif hasattr(format_folder, 'children') and format_folder.children:
+                            # This is a format folder (VST, AUv2) - iterate through vendor folders inside
+                            for vendor_folder in format_folder.children:
+                                try:
+                                    vendor_name = vendor_folder.name if hasattr(vendor_folder, 'name') else "Unknown"
+
+                                    # Apply creator filter if specified (check vendor folder name)
+                                    if creator and creator.lower() not in vendor_name.lower():
+                                        continue
+
+                                    if hasattr(vendor_folder, 'is_loadable') and vendor_folder.is_loadable:
+                                        # Direct plugin in format folder (no vendor folder)
+                                        plugin_name = vendor_folder.name if hasattr(vendor_folder, 'name') else "Unknown"
+                                        plugin_uri = vendor_folder.uri if hasattr(vendor_folder, 'uri') else None
+                                        plugin_format = detect_format(plugin_uri)
+                                        plugin_vendor = extract_vendor_from_name(plugin_name)
+                                        plugin_type_detected = detect_type(plugin_name)
+
+                                        # Apply type filter
+                                        if plugin_type and plugin_type_detected.lower() != plugin_type.lower():
+                                            continue
+
+                                        all_plugins.append({
+                                            "name": plugin_name,
+                                            "uri": plugin_uri,
+                                            "vendor": plugin_vendor,
+                                            "format": plugin_format,
+                                            "type": plugin_type_detected
+                                        })
+                                    elif hasattr(vendor_folder, 'children'):
+                                        # Vendor folder containing plugins
+                                        vendor_plugins = collect_from_vendor(vendor_folder, vendor_name)
+                                        all_plugins.extend(vendor_plugins)
+                                except Exception as e:
+                                    self.log_message("Error processing vendor folder: " + str(e))
+                    except Exception as e:
+                        self.log_message("Error processing format folder: " + str(e))
+
+            # Return all plugins without filtering (filtering done on MCP server side)
+            return {
+                "plugins": all_plugins,
+                "count": len(all_plugins)
+            }
+        except Exception as e:
+            self.log_message("Error getting third party plugins: " + str(e))
+            self.log_message(traceback.format_exc())
+            raise
+
+    def _get_plugins_list(self, plugin_type="all"):
+        """Get list of available plugins (VST/AU/AAX) - optimized for speed"""
+        try:
+            app = self.application()
+            if not app or not hasattr(app, 'browser'):
+                raise RuntimeError("Browser not available")
+
+            plugins = []
+            browser = app.browser
+
+            # Helper to collect plugins from one level only (much faster)
+            def collect_from_level(item, category_name="", max_items=100):
+                count = 0
+                try:
+                    if hasattr(item, 'children') and item.children:
+                        for child in item.children:
+                            if count >= max_items:
+                                break
+                            try:
+                                # Check if loadable
+                                if hasattr(child, 'is_loadable') and child.is_loadable:
+                                    plugin_info = {
+                                        "name": child.name if hasattr(child, 'name') else "Unknown",
+                                        "uri": child.uri if hasattr(child, 'uri') else None,
+                                        "category": category_name
+                                    }
+                                    plugins.append(plugin_info)
+                                    count += 1
+                                # Check one level deeper for common plugin folders
+                                elif hasattr(child, 'children') and child.children:
+                                    folder_name = child.name if hasattr(child, 'name') else ""
+                                    for grandchild in child.children:
+                                        if count >= max_items:
+                                            break
+                                        if hasattr(grandchild, 'is_loadable') and grandchild.is_loadable:
+                                            plugin_info = {
+                                                "name": grandchild.name if hasattr(grandchild, 'name') else "Unknown",
+                                                "uri": grandchild.uri if hasattr(grandchild, 'uri') else None,
+                                                "category": category_name,
+                                                "folder": folder_name
+                                            }
+                                            plugins.append(plugin_info)
+                                            count += 1
+                            except Exception as e:
+                                self.log_message("Error processing item: " + str(e))
+                except Exception as e:
+                    self.log_message("Error collecting from level: " + str(e))
+
+            # Check for dedicated plugins category first (VST/AU plugins)
+            if hasattr(browser, 'plugins'):
+                collect_from_level(browser.plugins, "plugins", 100)
+
+            # Only scan requested categories
+            if plugin_type == "all" or plugin_type == "instruments":
+                if hasattr(browser, 'instruments'):
+                    collect_from_level(browser.instruments, "instruments", 50)
+
+            if plugin_type == "all" or plugin_type == "audio_effects":
+                if hasattr(browser, 'audio_effects'):
+                    collect_from_level(browser.audio_effects, "audio_effects", 50)
+
+            if plugin_type == "all" or plugin_type == "midi_effects":
+                if hasattr(browser, 'midi_effects'):
+                    collect_from_level(browser.midi_effects, "midi_effects", 50)
+
+            return {
+                "plugins": plugins,
+                "count": len(plugins),
+                "plugin_type": plugin_type
+            }
+        except Exception as e:
+            self.log_message("Error getting plugins list: " + str(e))
+            self.log_message(traceback.format_exc())
+            raise
