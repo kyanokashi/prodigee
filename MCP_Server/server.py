@@ -111,7 +111,7 @@ class AbletonConnection:
             "create_scene", "delete_scene", "fire_scene",
             "set_loop_start", "set_loop_end", "set_playback_position", "set_metronome",
             "quantize_notes", "transpose_notes",
-            "set_tempo", "fire_clip", "stop_clip", "set_device_parameter",
+            "set_tempo", "fire_clip", "stop_clip", "set_device_parameter", "set_device_parameters",
             "start_playback", "stop_playback", "load_instrument_or_effect"
         ]
         
@@ -802,46 +802,84 @@ def get_device_parameters(ctx: Context, track_index: int, device_index: int) -> 
         return f"Error getting device parameters: {str(e)}"
 
 @mcp.tool()
-def set_device_parameter(ctx: Context, track_index: int, device_index: int, 
-                         parameter_name: Optional[str] = None, 
-                         parameter_index: Optional[int] = None, 
-                         value: Optional[Union[float, int, str]] = None) -> str:
+def set_device_parameter(ctx: Context, track_index: int, device_index: int,
+                         parameter_name: Optional[str] = None,
+                         parameter_index: Optional[int] = None,
+                         value: Optional[Union[float, int, str]] = None,
+                         parameters: Optional[List[Dict[str, Union[str, int, float]]]] = None) -> str:
     """
-    Set a device parameter by name or index.
-    
-    Parameters:
+    Set one or multiple device parameters.
+
+    For single parameter:
     - track_index: The index of the track containing the device
     - device_index: The index of the device on the track
     - parameter_name: The name of the parameter to set (alternative to parameter_index)
     - parameter_index: The index of the parameter to set (alternative to parameter_name)
     - value: The value to set the parameter to
-    
+
+    For multiple parameters:
+    - track_index: The index of the track containing the device
+    - device_index: The index of the device on the track
+    - parameters: List of parameter dictionaries, each containing:
+      * Either 'parameter_name' (str) or 'parameter_index' (int)
+      * 'value' (float, int, or str)
+      Example: [{"parameter_name": "Frequency", "value": 440}, {"parameter_index": 5, "value": 0.5}]
+
     Returns:
     - String with the result of the operation
     """
     try:
-        if parameter_name is None and parameter_index is None:
-            return "Error: Either parameter_name or parameter_index must be provided"
-        
-        if value is None:
-            return "Error: Value must be provided"
-        
-        ableton = get_ableton_connection()
-        result = ableton.send_command("set_device_parameter", {
-            "track_index": track_index,
-            "device_index": device_index,
-            "parameter_name": parameter_name,
-            "parameter_index": parameter_index,
-            "value": value
-        })
-        
-        if "parameter_name" in result:
-            return f"Set parameter '{result['parameter_name']}' of device '{result['device_name']}' to {result['value']}"
+        # Check if we're setting multiple parameters
+        if parameters is not None:
+            if parameter_name is not None or parameter_index is not None or value is not None:
+                return "Error: Cannot use both single parameter arguments and parameters list"
+
+            if not isinstance(parameters, list) or len(parameters) == 0:
+                return "Error: parameters must be a non-empty list"
+
+            ableton = get_ableton_connection()
+            result = ableton.send_command("set_device_parameters", {
+                "track_index": track_index,
+                "device_index": device_index,
+                "parameters": parameters
+            })
+
+            if "results" in result:
+                success_count = sum(1 for r in result["results"] if r.get("success", False))
+                total_count = len(result["results"])
+                summary = f"Set {success_count}/{total_count} parameters on device '{result['device_name']}':\n"
+                for r in result["results"]:
+                    if r.get("success"):
+                        summary += f"  ✓ {r['parameter_name']}: {r['value']}\n"
+                    else:
+                        summary += f"  ✗ {r.get('parameter_name', 'unknown')}: {r.get('error', 'unknown error')}\n"
+                return summary.rstrip()
+            else:
+                return f"Failed to set parameters: {result.get('message', 'Unknown error')}"
         else:
-            return f"Failed to set parameter: {result.get('message', 'Unknown error')}"
+            # Single parameter mode
+            if parameter_name is None and parameter_index is None:
+                return "Error: Either parameter_name, parameter_index, or parameters list must be provided"
+
+            if value is None:
+                return "Error: Value must be provided for single parameter mode"
+
+            ableton = get_ableton_connection()
+            result = ableton.send_command("set_device_parameter", {
+                "track_index": track_index,
+                "device_index": device_index,
+                "parameter_name": parameter_name,
+                "parameter_index": parameter_index,
+                "value": value
+            })
+
+            if "parameter_name" in result:
+                return f"Set parameter '{result['parameter_name']}' of device '{result['device_name']}' to {result['value']}"
+            else:
+                return f"Failed to set parameter: {result.get('message', 'Unknown error')}"
     except Exception as e:
-        logger.error(f"Error setting device parameter: {str(e)}")
-        return f"Error setting device parameter: {str(e)}"
+        logger.error(f"Error setting device parameter(s): {str(e)}")
+        return f"Error setting device parameter(s): {str(e)}"
 
 # ============================================================================
 # MACRO CONTROL TOOLS

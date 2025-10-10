@@ -277,7 +277,7 @@ class AbletonMCP(ControlSurface):
                                  "quantize_notes", "transpose_notes", "create_audio_track",
                                  "set_tempo", "fire_clip", "stop_clip",
                                  "start_playback", "stop_playback", "load_browser_item",
-                                 "set_device_parameter", "map_parameter_to_macro"]:
+                                 "set_device_parameter", "set_device_parameters", "map_parameter_to_macro"]:
                 # Use a thread-safe approach with a response queue
                 response_queue = queue.Queue()
                 
@@ -342,6 +342,11 @@ class AbletonMCP(ControlSurface):
                             parameter_index = params.get("parameter_index", None)
                             value = params.get("value", None)
                             result = self._set_device_parameter(track_index, device_index, parameter_name, parameter_index, value)
+                        elif command_type == "set_device_parameters":
+                            track_index = params.get("track_index", 0)
+                            device_index = params.get("device_index", 0)
+                            parameters = params.get("parameters", [])
+                            result = self._set_device_parameters(track_index, device_index, parameters)
                         elif command_type == "map_parameter_to_macro":
                             track_index = params.get("track_index", 0)
                             device_index = params.get("device_index", 0)
@@ -1481,6 +1486,161 @@ class AbletonMCP(ControlSurface):
             }
         except Exception as e:
             self.log_message("Error setting device parameter: " + str(e))
+            self.log_message(traceback.format_exc())
+            raise
+
+    def _set_device_parameters(self, track_index, device_index, parameters):
+        """Set multiple device parameters at once"""
+        try:
+            if track_index < 0 or track_index >= len(self._song.tracks):
+                raise IndexError("Track index out of range")
+
+            track = self._song.tracks[track_index]
+
+            if device_index < 0 or device_index >= len(track.devices):
+                raise IndexError("Device index out of range")
+
+            device = track.devices[device_index]
+
+            results = []
+
+            for param_config in parameters:
+                try:
+                    parameter_name = param_config.get('parameter_name')
+                    parameter_index = param_config.get('parameter_index')
+                    value = param_config.get('value')
+
+                    # Find the parameter by name or index
+                    parameter = None
+                    if parameter_name is not None:
+                        # Find parameter by name
+                        for param in device.parameters:
+                            if param.name == parameter_name:
+                                parameter = param
+                                break
+
+                        if parameter is None:
+                            results.append({
+                                "success": False,
+                                "parameter_name": parameter_name,
+                                "error": f"Parameter '{parameter_name}' not found in device '{device.name}'"
+                            })
+                            continue
+
+                    elif parameter_index is not None:
+                        # Find parameter by index
+                        if parameter_index < 0 or parameter_index >= len(device.parameters):
+                            results.append({
+                                "success": False,
+                                "parameter_index": parameter_index,
+                                "error": "Parameter index out of range"
+                            })
+                            continue
+
+                        parameter = device.parameters[parameter_index]
+
+                    else:
+                        results.append({
+                            "success": False,
+                            "error": "Either parameter_name or parameter_index must be provided"
+                        })
+                        continue
+
+                    # Check if the parameter is enabled
+                    if not parameter.is_enabled:
+                        results.append({
+                            "success": False,
+                            "parameter_name": parameter.name,
+                            "error": f"Parameter '{parameter.name}' is not enabled"
+                        })
+                        continue
+
+                    # Set the parameter value
+                    if value is None:
+                        results.append({
+                            "success": False,
+                            "parameter_name": parameter.name,
+                            "error": "Value must be provided"
+                        })
+                        continue
+
+                    # Convert value to appropriate type if it's a string
+                    # Use type name check for Python 2/3 compatibility
+                    if type(value).__name__ in ('str', 'unicode'):
+                        try:
+                            # Try to convert to float first
+                            value = float(value)
+                        except (ValueError, TypeError):
+                            # If that fails, keep as string (for quantized parameters)
+                            pass
+
+                    # Handle quantized parameters (e.g., filter types)
+                    if parameter.is_quantized and len(parameter.value_items) > 1:
+                        # If value is a string, find the matching value item
+                        if isinstance(value, str):
+                            value_index = None
+                            for i, item in enumerate(parameter.value_items):
+                                if str(item).lower() == value.lower():
+                                    value_index = i
+                                    break
+
+                            if value_index is None:
+                                results.append({
+                                    "success": False,
+                                    "parameter_name": parameter.name,
+                                    "error": f"Value '{value}' not found in parameter value items"
+                                })
+                                continue
+
+                            value = value_index
+
+                        # Ensure value is an integer for quantized parameters
+                        value = int(value)
+
+                        # Check if value is in range
+                        if value < 0 or value >= len(parameter.value_items):
+                            results.append({
+                                "success": False,
+                                "parameter_name": parameter.name,
+                                "error": f"Value index {value} out of range"
+                            })
+                            continue
+                    else:
+                        # For continuous parameters, ensure value is within range
+                        if value < parameter.min or value > parameter.max:
+                            results.append({
+                                "success": False,
+                                "parameter_name": parameter.name,
+                                "error": f"Value {value} out of range (min: {parameter.min}, max: {parameter.max})"
+                            })
+                            continue
+
+                    # Set the parameter value
+                    parameter.value = value
+
+                    results.append({
+                        "success": True,
+                        "parameter_name": parameter.name,
+                        "parameter_index": list(device.parameters).index(parameter),
+                        "value": parameter.value,
+                        "min": parameter.min,
+                        "max": parameter.max
+                    })
+
+                except Exception as e:
+                    self.log_message("Error setting parameter: " + str(e))
+                    results.append({
+                        "success": False,
+                        "parameter_name": param_config.get('parameter_name', 'unknown'),
+                        "error": str(e)
+                    })
+
+            return {
+                "device_name": device.name,
+                "results": results
+            }
+        except Exception as e:
+            self.log_message("Error setting device parameters: " + str(e))
             self.log_message(traceback.format_exc())
             raise
 
