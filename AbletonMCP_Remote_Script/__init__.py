@@ -751,8 +751,15 @@ class AbletonMCP(ControlSurface):
             if not clip.is_midi_clip:
                 raise Exception("Clip is not a MIDI clip")
 
-            # Convert note data to Live 11+ format (dictionaries)
-            live_notes = []
+            # For Live 11+, add_new_notes expects a specific note specification format
+            # We need to get the existing notes first, then add the new ones using set_notes
+            # This is a workaround since add_new_notes with dicts doesn't work reliably
+
+            # Get existing notes
+            existing_notes = clip.get_notes_extended(0, 0, clip.length, 128)
+
+            # Convert existing notes to tuples
+            existing_notes_list = []
             for note in notes:
                 note_dict = {
                     "pitch": note.get("pitch", 60),
