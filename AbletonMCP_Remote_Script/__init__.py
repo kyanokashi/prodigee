@@ -15,8 +15,7 @@ except ImportError:
     import queue  # Python 3
 
 # Constants for socket communication
-DEFAULT_PORT = 9877
-HOST = "localhost"
+SOCKET_PATH = "/tmp/ableton_mcp.sock"
 
 def create_instance(c_instance):
     """Create and return the AbletonMCP script instance"""
@@ -45,47 +44,62 @@ class AbletonMCP(ControlSurface):
         self.log_message("AbletonMCP initialized")
         
         # Show a message in Ableton
-        self.show_message("AbletonMCP: Listening for commands on port " + str(DEFAULT_PORT))
+        self.show_message("AbletonMCP: Listening on " + SOCKET_PATH)
     
     def disconnect(self):
         """Called when Ableton closes or the control surface is removed"""
+        import os
         self.log_message("AbletonMCP disconnecting...")
         self.running = False
-        
+
         # Stop the server
         if self.server:
             try:
                 self.server.close()
             except:
                 pass
-        
+
+        # Clean up socket file
+        try:
+            if os.path.exists(SOCKET_PATH):
+                os.unlink(SOCKET_PATH)
+        except:
+            pass
+
         # Wait for the server thread to exit
         if self.server_thread and self.server_thread.is_alive():
             self.server_thread.join(1.0)
-            
+
         # Clean up any client threads
         for client_thread in self.client_threads[:]:
             if client_thread.is_alive():
                 # We don't join them as they might be stuck
                 self.log_message("Client thread still alive during disconnect")
-        
+
         ControlSurface.disconnect(self)
         self.log_message("AbletonMCP disconnected")
     
     def start_server(self):
-        """Start the socket server in a separate thread"""
+        """Start the Unix domain socket server in a separate thread"""
+        import os
         try:
-            self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self.server.bind((HOST, DEFAULT_PORT))
+            # Remove socket file if it already exists
+            try:
+                os.unlink(SOCKET_PATH)
+            except OSError:
+                if os.path.exists(SOCKET_PATH):
+                    raise
+
+            self.server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            self.server.bind(SOCKET_PATH)
             self.server.listen(5)  # Allow up to 5 pending connections
-            
+
             self.running = True
             self.server_thread = threading.Thread(target=self._server_thread)
             self.server_thread.daemon = True
             self.server_thread.start()
-            
-            self.log_message("Server started on port " + str(DEFAULT_PORT))
+
+            self.log_message("Server started on " + SOCKET_PATH)
         except Exception as e:
             self.log_message("Error starting server: " + str(e))
             self.show_message("AbletonMCP: Error starting server - " + str(e))
@@ -760,27 +774,27 @@ class AbletonMCP(ControlSurface):
 
             # Convert existing notes to tuples
             existing_notes_list = []
+            for note in existing_notes:
+                existing_notes_list.append((
+                    note.pitch,
+                    note.start_time,
+                    note.duration,
+                    note.velocity,
+                    note.mute
+                ))
+
+            # Convert new notes to tuples
             for note in notes:
-                note_dict = {
-                    "pitch": note.get("pitch", 60),
-                    "start_time": note.get("start_time", 0.0),
-                    "duration": note.get("duration", 0.25),
-                    "velocity": note.get("velocity", 100),
-                    "mute": note.get("mute", False)
-                }
+                pitch = int(note.get("pitch", 60))
+                start_time = float(note.get("start_time", 0.0))
+                duration = float(note.get("duration", 0.25))
+                velocity = int(note.get("velocity", 100))
+                mute = bool(note.get("mute", False))
 
-                # Add extended properties if provided (Live 11+)
-                if "velocity_deviation" in note:
-                    note_dict["velocity_deviation"] = note.get("velocity_deviation", 0.0)
-                if "release_velocity" in note:
-                    note_dict["release_velocity"] = note.get("release_velocity", 64)
-                if "probability" in note:
-                    note_dict["probability"] = note.get("probability", 1.0)
+                existing_notes_list.append((pitch, start_time, duration, velocity, mute))
 
-                live_notes.append(note_dict)
-
-            # Add new notes without replacing existing ones
-            clip.add_new_notes(tuple(live_notes))
+            # Set all notes (existing + new)
+            clip.set_notes(tuple(existing_notes_list))
 
             result = {
                 "note_count": len(notes),

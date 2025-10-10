@@ -14,19 +14,18 @@ logger = logging.getLogger("AbletonMCPServer")
 
 @dataclass
 class AbletonConnection:
-    host: str
-    port: int
+    socket_path: str
     sock: socket.socket = None
-    
+
     def connect(self) -> bool:
-        """Connect to the Ableton Remote Script socket server"""
+        """Connect to the Ableton Remote Script Unix domain socket server"""
         if self.sock:
             return True
-            
+
         try:
-            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.sock.connect((self.host, self.port))
-            logger.info(f"Connected to Ableton at {self.host}:{self.port}")
+            self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            self.sock.connect(self.socket_path)
+            logger.info(f"Connected to Ableton at {self.socket_path}")
             return True
         except Exception as e:
             logger.error(f"Failed to connect to Ableton: {str(e)}")
@@ -241,13 +240,14 @@ def get_ableton_connection():
     if _ableton_connection is None:
         # Try to connect up to 3 times with a short delay between attempts
         max_attempts = 3
+        socket_path = "/tmp/ableton_mcp.sock"
         for attempt in range(1, max_attempts + 1):
             try:
                 logger.info(f"Connecting to Ableton (attempt {attempt}/{max_attempts})...")
-                _ableton_connection = AbletonConnection(host="localhost", port=9877)
+                _ableton_connection = AbletonConnection(socket_path=socket_path)
                 if _ableton_connection.connect():
                     logger.info("Created new persistent connection to Ableton")
-                    
+
                     # Validate connection with a simple command
                     try:
                         # Get session info as a test
@@ -266,12 +266,12 @@ def get_ableton_connection():
                 if _ableton_connection:
                     _ableton_connection.disconnect()
                     _ableton_connection = None
-            
+
             # Wait before trying again, but only if we have more attempts left
             if attempt < max_attempts:
                 import time
                 time.sleep(1.0)
-        
+
         # If we get here, all connection attempts failed
         if _ableton_connection is None:
             logger.error("Failed to connect to Ableton after multiple attempts")
