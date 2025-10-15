@@ -42,3 +42,7 @@ Thumbs.db
 *.adv
 *.asd
 !AbletonMCP_Remote_Script/*
+
+.gemini/
+.cursor/
+.claude/
